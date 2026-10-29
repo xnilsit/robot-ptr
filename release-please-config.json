@@ -14,7 +14,10 @@
       "include-v-in-release-name": false,
       "always-update": true,
       "extra-files": [
-        "charts/robot-ptr/Chart.yaml"
+        {
+          "type": "generic",
+          "path": "charts/robot-ptr/Chart.yaml"
+        }
       ]
     }
   },
