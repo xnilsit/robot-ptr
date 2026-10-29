@@ -1,0 +1,42 @@
+[tools]
+actionlint = "1.7.12"
+go = "1.27.3"
+"go:golang.org/x/vuln/cmd/govulncheck" = "v1.9.0"
+golangci-lint = "2.15.0"
+zizmor = "1.31.1"
+
+[tasks.build]
+description = "Build the controller binary"
+run = "go build -trimpath -o bin/robot-ptr ./cmd/robot-ptr"
+
+[tasks.fmt]
+description = "Run go fmt against code"
+run = "go fmt ./..."
+
+[tasks.vet]
+description = "Run go vet against code"
+run = "go vet ./..."
+
+[tasks.test]
+description = "Run tests with coverage"
+run = "go test -race $(go list ./...) -coverprofile cover.out"
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.lint-fix]
+description = "Run golangci-lint with --fix"
+run = "golangci-lint run --fix"
+
+[tasks.lint-workflows]
+description = "Lint GitHub workflows"
+run = ["actionlint", "zizmor .github/workflows"]
+
+[tasks.vulncheck]
+description = "Scan for known vulnerabilities with govulncheck"
+run = "govulncheck ./..."
+
+[tasks.run]
+description = "Run the controller against the current kubeconfig without changing any PTR"
+run = "go run ./cmd/robot-ptr --dry-run"

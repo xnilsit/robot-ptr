@@ -1,0 +1,6 @@
+# actionlint 1.7.12 does not understand the `$/` self-repository syntax yet,
+# so the local reusable workflow call keeps the classic `./` form.
+rules:
+  self-repository:
+    ignore:
+      - release-please.yaml

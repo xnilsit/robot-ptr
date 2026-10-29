@@ -1,0 +1,7 @@
+.git
+.github
+.mise
+bin
+deploy
+*.md
+*.out
