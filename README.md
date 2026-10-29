@@ -117,3 +117,7 @@ open; merging it tags the release and publishes a signed multi-arch image to
 tags, and the Helm chart to `oci://ghcr.io/xnilsit/charts/robot-ptr`. Both
 are signed with cosign. Every push to `main` also publishes
 `ghcr.io/xnilsit/robot-ptr:main`.
+
+## License
+
+[Apache License 2.0](LICENSE)
