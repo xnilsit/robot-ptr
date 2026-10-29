@@ -28,7 +28,6 @@
 
 ### Documentation
 
-* license under Apache-2.0 ([01a0ee9](https://github.com/xnilsit/robot-ptr/commit/01a0ee909d1fd6fafe99cce275928171c6da938c))
 * license under Apache-2.0 ([e6ff360](https://github.com/xnilsit/robot-ptr/commit/e6ff3605a15833c7f882232654023e38dcb27904))
 
 
