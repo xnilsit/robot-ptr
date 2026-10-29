@@ -3,8 +3,8 @@ apiVersion: v2
 name: robot-ptr
 description: Points the reverse DNS of Hetzner Robot servers at the pods running on them
 type: application
-version: 0.1.0 # x-release-please-version
-appVersion: 0.1.0 # x-release-please-version
+version: 0.1.1 # x-release-please-version
+appVersion: 0.1.1 # x-release-please-version
 kubeVersion: ">=1.31.0-0"
 home: https://github.com/xnilsit/robot-ptr
 sources:
