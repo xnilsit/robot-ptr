@@ -4,6 +4,15 @@
   postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
   // Open fix PRs for vulnerable Go modules right away, outside any schedule.
   osvVulnerabilityAlerts: true,
+  // Merge them once CI passes. The release workflow then decides whether the
+  // fix is released right away. CI only runs on pull requests, so they can't
+  // use the preset's branch automerge, and a merge commit would duplicate the
+  // changelog entry.
+  vulnerabilityAlerts: {
+    automerge: true,
+    automergeType: "pr",
+    automergeStrategy: "squash",
+  },
   packageRules: [
     {
       description: "The Go toolchain is compiled into the binary, so its updates have to cut a release.",
