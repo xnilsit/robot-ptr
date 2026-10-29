@@ -52,6 +52,9 @@ type Annotations struct {
 	DefaultPTR string
 	// IP is set on nodes and overrides IP address detection.
 	IP string
+	// PodLeftAt is maintained by the controller on nodes. It records when the
+	// last annotated pod left, so the reset delay survives restarts.
+	PodLeftAt string
 }
 
 // AnnotationsWithPrefix returns the annotation keys for prefix.
@@ -60,6 +63,7 @@ func AnnotationsWithPrefix(prefix string) Annotations {
 		PTR:        prefix + "/ptr",
 		DefaultPTR: prefix + "/default-ptr",
 		IP:         prefix + "/ip",
+		PodLeftAt:  prefix + "/pod-left-at",
 	}
 }
 
@@ -77,7 +81,8 @@ type NodeReconciler struct {
 	// value deletes the entry, which restores Hetzner's generated name.
 	DefaultPTR string
 	// ResetDelay keeps the last PTR for this long after the annotated pod left
-	// the node, so rolling updates do not flap the record.
+	// the node, so rolling updates do not flap the record. The start of the
+	// delay is stored in the PodLeftAt node annotation.
 	ResetDelay time.Duration
 	// ResyncInterval is how often the Robot API is re-read to correct drift.
 	ResyncInterval time.Duration
@@ -87,19 +92,18 @@ type NodeReconciler struct {
 	// Now is overridable for tests.
 	Now func() time.Time
 
-	mu       sync.Mutex
-	applied  map[string]appliedPTR // keyed by IP
-	lastSeen map[string]time.Time  // keyed by node name
-
-	conflicts map[string]string // last ConflictingPTR message, keyed by node name
+	mu        sync.Mutex
+	ptrs      map[string]cachedPTR // keyed by IP
+	conflicts map[string]string    // last ConflictingPTR message, keyed by node name
 }
 
-type appliedPTR struct {
+// cachedPTR is the last known PTR of an IP, normalized like normalizeCurrent.
+type cachedPTR struct {
 	ptr string
 	at  time.Time
 }
 
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
@@ -110,7 +114,6 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	var node corev1.Node
 	if err := r.Get(ctx, req.NamespacedName, &node); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.clearLastSeen(req.Name)
 			r.setConflicts(req.Name, "")
 			return ctrl.Result{}, nil
 		}
@@ -134,53 +137,120 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	desired, source, conflicts := r.desiredFromPods(pods.Items)
 	r.reportConflicts(&node, desired, source, conflicts)
 
-	now := r.Now()
 	if source != "" {
-		r.setLastSeen(node.Name, now)
+		if err := r.setPodLeftAt(ctx, &node, nil); err != nil {
+			return ctrl.Result{}, err
+		}
 	} else {
 		desired = r.defaultPTR(&node)
-		if seen, ok := r.getLastSeen(node.Name); ok {
-			if wait := seen.Add(r.ResetDelay).Sub(now); wait > 0 {
-				log.V(1).Info("delaying reset to default PTR", "remaining", wait)
-				return ctrl.Result{RequeueAfter: wait}, nil
-			}
+		wait, err := r.resetWait(ctx, &node, ip, desired)
+		if err != nil {
+			return robotErrorResult(ctx, err)
+		}
+		if wait > 0 {
+			log.V(1).Info("delaying reset to default PTR", "remaining", wait)
+			return ctrl.Result{RequeueAfter: wait}, nil
 		}
 	}
 	if err := r.apply(ctx, &node, ip, desired, source); err != nil {
-		if robot.IsRateLimited(err) {
-			log.Info("robot api rate limit exceeded, backing off")
-			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
-		}
-		return ctrl.Result{}, err
+		return robotErrorResult(ctx, err)
 	}
 	if source == "" {
-		r.clearLastSeen(node.Name)
+		if err := r.setPodLeftAt(ctx, &node, nil); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	return ctrl.Result{RequeueAfter: r.ResyncInterval}, nil
 }
 
+func robotErrorResult(ctx context.Context, err error) (ctrl.Result, error) {
+	if robot.IsRateLimited(err) {
+		logf.FromContext(ctx).Info("robot api rate limit exceeded, backing off")
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+	}
+	return ctrl.Result{}, err
+}
+
+// resetWait returns how long the reset of node to its default PTR still has to
+// wait. The delay starts when a reconcile first finds the node without an
+// annotated pod while its PTR differs from the default; that time is stored in
+// the PodLeftAt annotation.
+func (r *NodeReconciler) resetWait(ctx context.Context, node *corev1.Node, ip, desired string) (time.Duration, error) {
+	if r.ResetDelay <= 0 {
+		return 0, nil
+	}
+	now := r.Now()
+	v, ok := node.Annotations[r.Annotations.PodLeftAt]
+	if !ok {
+		current, err := r.currentPTR(ctx, ip)
+		if err != nil || current == desired {
+			return 0, err
+		}
+		if err := r.setPodLeftAt(ctx, node, &now); err != nil {
+			return 0, err
+		}
+		return r.ResetDelay, nil
+	}
+	leftAt, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		logf.FromContext(ctx).Info("ignoring invalid annotation, resetting now",
+			"annotation", r.Annotations.PodLeftAt, "value", v)
+		return 0, nil
+	}
+	return max(leftAt.Add(r.ResetDelay).Sub(now), 0), nil
+}
+
+// setPodLeftAt sets the PodLeftAt annotation of node to at, or removes it if
+// at is nil. Removing a missing annotation does nothing.
+func (r *NodeReconciler) setPodLeftAt(ctx context.Context, node *corev1.Node, at *time.Time) error {
+	key := r.Annotations.PodLeftAt
+	_, exists := node.Annotations[key]
+	if at == nil && !exists {
+		return nil
+	}
+	orig := node.DeepCopy()
+	if at == nil {
+		delete(node.Annotations, key)
+	} else {
+		if node.Annotations == nil {
+			node.Annotations = map[string]string{}
+		}
+		node.Annotations[key] = at.UTC().Format(time.RFC3339)
+	}
+	if err := r.Patch(ctx, node, client.MergeFrom(orig)); err != nil {
+		return fmt.Errorf("update %s annotation: %w", key, err)
+	}
+	return nil
+}
+
+// currentPTR returns the PTR of ip, read from the Robot API at most once per
+// resync interval. Hetzner's generated name is returned as "".
+func (r *NodeReconciler) currentPTR(ctx context.Context, ip string) (string, error) {
+	if cached, ok := r.getCached(ip); ok && r.Now().Sub(cached.at) < r.ResyncInterval {
+		return cached.ptr, nil
+	}
+	current, err := r.Robot.GetPTR(ctx, ip)
+	if err != nil {
+		return "", fmt.Errorf("get ptr for %s: %w", ip, err)
+	}
+	current = normalizeCurrent(current)
+	r.setCached(ip, current)
+	return current, nil
+}
+
 // apply makes sure the PTR of ip is desired. An empty desired value deletes
-// the entry. The Robot API is only read once per resync interval.
+// the entry.
 func (r *NodeReconciler) apply(ctx context.Context, node *corev1.Node, ip, desired, source string) error {
 	log := logf.FromContext(ctx).WithValues("ip", ip, "ptr", desired)
 
-	now := r.Now()
-	if cached, ok := r.getApplied(ip); ok && cached.ptr == desired && now.Sub(cached.at) < r.ResyncInterval {
-		return nil
-	}
-
-	current, err := r.Robot.GetPTR(ctx, ip)
-	if err != nil {
-		return fmt.Errorf("get ptr for %s: %w", ip, err)
-	}
-	if normalizeCurrent(current) == desired {
-		r.setApplied(ip, desired, now)
-		return nil
+	current, err := r.currentPTR(ctx, ip)
+	if err != nil || current == desired {
+		return err
 	}
 
 	if r.DryRun {
 		log.Info("dry-run: would update PTR", "current", current)
-		r.setApplied(ip, desired, now)
+		r.setCached(ip, desired)
 		return nil
 	}
 
@@ -192,7 +262,7 @@ func (r *NodeReconciler) apply(ctx context.Context, node *corev1.Node, ip, desir
 	if err != nil {
 		return fmt.Errorf("update ptr for %s: %w", ip, err)
 	}
-	r.setApplied(ip, desired, now)
+	r.setCached(ip, desired)
 
 	reason, msg := "PTRUpdated", fmt.Sprintf("set PTR of %s to %q (was %q)", ip, desired, current)
 	if source == "" {
@@ -318,42 +388,20 @@ func normalizeCurrent(s string) string {
 	return s
 }
 
-func (r *NodeReconciler) getApplied(ip string) (appliedPTR, bool) {
+func (r *NodeReconciler) getCached(ip string) (cachedPTR, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	v, ok := r.applied[ip]
+	v, ok := r.ptrs[ip]
 	return v, ok
 }
 
-func (r *NodeReconciler) setApplied(ip, ptr string, at time.Time) {
+func (r *NodeReconciler) setCached(ip, ptr string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.applied == nil {
-		r.applied = map[string]appliedPTR{}
+	if r.ptrs == nil {
+		r.ptrs = map[string]cachedPTR{}
 	}
-	r.applied[ip] = appliedPTR{ptr: ptr, at: at}
-}
-
-func (r *NodeReconciler) getLastSeen(node string) (time.Time, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	v, ok := r.lastSeen[node]
-	return v, ok
-}
-
-func (r *NodeReconciler) setLastSeen(node string, at time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.lastSeen == nil {
-		r.lastSeen = map[string]time.Time{}
-	}
-	r.lastSeen[node] = at
-}
-
-func (r *NodeReconciler) clearLastSeen(node string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.lastSeen, node)
+	r.ptrs[ip] = cachedPTR{ptr: ptr, at: r.Now()}
 }
 
 // setConflicts stores the conflict message of node, where "" means no

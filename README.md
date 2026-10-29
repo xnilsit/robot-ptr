@@ -21,14 +21,14 @@ The controller reconciles **nodes**. For each node it
 Pod events only enqueue the node the pod is scheduled on, so a pod moving from
 node A to B updates both, and a periodic resync corrects drift and missed events.
 
-| Behaviour       | Details                                                                                                                                                           |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Default PTR     | `--default-ptr`, overridable per node with `<prefix>/default-ptr`. Empty deletes the entry, which restores Hetzner's `static.….clients.your-server.de` name.      |
-| Rolling updates | The last PTR is kept for `--reset-delay` (1m) after the pod left before resetting. The delay is held in memory, so a controller restart resets immediately.       |
-| Conflicts       | Several pods with different PTRs on one node: the oldest wins, a `ConflictingPTR` warning event is recorded on the node whenever the conflicting requests change. |
-| Robot API usage | Each IP is read at most once per `--resync-interval` (15m) and written only when it differs. Rate limit responses back off for 5 minutes.                         |
-| Memory          | All pods are cached, but only the fields the controller reads: node name, phase, readiness, timestamps and the `<prefix>/ptr` annotation.                         |
-| Dry run         | `--dry-run` logs the changes it would make without writing anything.                                                                                              |
+| Behaviour       | Details                                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Default PTR     | `--default-ptr`, overridable per node with `<prefix>/default-ptr`. Empty deletes the entry, which restores Hetzner's `static.….clients.your-server.de` name.                                           |
+| Rolling updates | The last PTR is kept for `--reset-delay` (1m) after the pod left before resetting. The start of the delay is stored in the `<prefix>/pod-left-at` node annotation, so it survives controller restarts. |
+| Conflicts       | Several pods with different PTRs on one node: the oldest wins, a `ConflictingPTR` warning event is recorded on the node whenever the conflicting requests change.                                      |
+| Robot API usage | Each IP is read at most once per `--resync-interval` (15m) and written only when it differs. Rate limit responses back off for 5 minutes.                                                              |
+| Memory          | All pods are cached, but only the fields the controller reads: node name, phase, readiness, timestamps and the `<prefix>/ptr` annotation.                                                              |
+| Dry run         | `--dry-run` logs the changes it would make without writing to the Robot API. The `<prefix>/pod-left-at` node annotation is still maintained.                                                           |
 
 The default `<prefix>` is `robot-ptr.nilsit.dev` (`--annotation-prefix`).
 

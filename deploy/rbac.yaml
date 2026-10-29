@@ -11,7 +11,10 @@ metadata:
   name: robot-ptr
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods"]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]

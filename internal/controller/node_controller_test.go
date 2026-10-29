@@ -74,6 +74,29 @@ func newFixture(t *testing.T, objs ...client.Object) *fixture {
 	return f
 }
 
+// restart replaces the reconciler, dropping all in-memory state.
+func (f *fixture) restart() {
+	r := f.r
+	f.r = &NodeReconciler{
+		Client:         r.Client,
+		Robot:          r.Robot,
+		Recorder:       r.Recorder,
+		Annotations:    r.Annotations,
+		ResetDelay:     r.ResetDelay,
+		ResyncInterval: r.ResyncInterval,
+		Now:            r.Now,
+	}
+}
+
+func (f *fixture) podLeftAt(t *testing.T) string {
+	t.Helper()
+	var n corev1.Node
+	if err := f.r.Get(context.Background(), types.NamespacedName{Name: "node-1"}, &n); err != nil {
+		t.Fatal(err)
+	}
+	return n.Annotations[f.r.Annotations.PodLeftAt]
+}
+
 func (f *fixture) reconcile(t *testing.T) ctrl.Result {
 	t.Helper()
 	res, err := f.r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "node-1"}})
@@ -149,6 +172,13 @@ func TestResetsAfterDelay(t *testing.T) {
 	if err := f.r.Delete(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
+	if res := f.reconcile(t); res.RequeueAfter != time.Minute {
+		t.Fatalf("expected delayed reset, requeueAfter = %v", res.RequeueAfter)
+	}
+	if got := f.podLeftAt(t); got != "2026-10-29T12:00:00Z" {
+		t.Fatalf("pod-left-at = %q", got)
+	}
+
 	f.now = f.now.Add(10 * time.Second)
 	if res := f.reconcile(t); res.RequeueAfter != 50*time.Second {
 		t.Fatalf("expected delayed reset, requeueAfter = %v", res.RequeueAfter)
@@ -161,6 +191,65 @@ func TestResetsAfterDelay(t *testing.T) {
 	f.reconcile(t)
 	if got := f.robot.ptrs[nodeIP]; got != "node-1.example.com" {
 		t.Fatalf("ptr = %q, want node default", got)
+	}
+	if got := f.podLeftAt(t); got != "" {
+		t.Fatalf("pod-left-at not removed after reset: %q", got)
+	}
+}
+
+func TestResetDelaySurvivesRestart(t *testing.T) {
+	p := pod("smtp", "mail.example.com", time.Now(), true)
+	f := newFixture(t, node(nil), p)
+	f.reconcile(t)
+	if err := f.r.Delete(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile(t)
+
+	f.restart()
+	f.now = f.now.Add(20 * time.Second)
+	if res := f.reconcile(t); res.RequeueAfter != 40*time.Second {
+		t.Fatalf("expected delayed reset after restart, requeueAfter = %v", res.RequeueAfter)
+	}
+	if f.robot.writes != 1 {
+		t.Fatalf("ptr reset too early: %q", f.robot.ptrs[nodeIP])
+	}
+}
+
+func TestRestartWithoutPodDelaysReset(t *testing.T) {
+	// The previous instance set the PTR but stopped before seeing the pod leave.
+	f := newFixture(t, node(nil))
+	f.robot.ptrs[nodeIP] = "mail.example.com"
+
+	if res := f.reconcile(t); res.RequeueAfter != time.Minute {
+		t.Fatalf("expected delayed reset, requeueAfter = %v", res.RequeueAfter)
+	}
+	if f.robot.writes != 0 || f.podLeftAt(t) == "" {
+		t.Fatalf("expected pod-left-at and no write, writes=%d", f.robot.writes)
+	}
+}
+
+func TestReturningPodCancelsReset(t *testing.T) {
+	f := newFixture(t, node(map[string]string{DefaultAnnotationPrefix + "/pod-left-at": "2026-10-29T11:59:30Z"}),
+		pod("smtp", "mail.example.com", time.Now(), true))
+	f.robot.ptrs[nodeIP] = "mail.example.com"
+
+	f.reconcile(t)
+	if got := f.podLeftAt(t); got != "" {
+		t.Fatalf("pod-left-at not removed: %q", got)
+	}
+	if f.robot.writes != 0 {
+		t.Fatalf("unexpected write: %q", f.robot.ptrs[nodeIP])
+	}
+}
+
+func TestNoDelayWhenAlreadyDefault(t *testing.T) {
+	f := newFixture(t, node(nil))
+	if res := f.reconcile(t); res.RequeueAfter != 15*time.Minute {
+		t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+	}
+	if got := f.podLeftAt(t); got != "" {
+		t.Fatalf("unexpected pod-left-at %q", got)
 	}
 }
 
