@@ -31,7 +31,7 @@ import (
 const (
 	// DefaultAnnotationPrefix is the default prefix for all annotations read by
 	// the controller.
-	DefaultAnnotationPrefix = "robot-ptr.xnilsit.github.io"
+	DefaultAnnotationPrefix = "robot-ptr.nilsit.dev"
 
 	// podNodeNameField indexes pods by spec.nodeName.
 	podNodeNameField = "spec.nodeName"

@@ -111,7 +111,7 @@ func run(o runOptions) error {
 		Metrics:                metricsserver.Options{BindAddress: o.metricsAddr},
 		HealthProbeBindAddress: o.probeAddr,
 		LeaderElection:         o.leaderElect,
-		LeaderElectionID:       "robot-ptr.xnilsit.github.io",
+		LeaderElectionID:       "robot-ptr.nilsit.dev",
 	})
 	if err != nil {
 		return err

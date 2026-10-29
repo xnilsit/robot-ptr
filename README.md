@@ -29,7 +29,7 @@ node A to B updates both, and a periodic resync corrects drift and missed events
 | Robot API usage      | Each IP is read at most once per `--resync-interval` (15m) and written only when it differs. Rate limit responses back off for 5 minutes.                                 |
 | Dry run              | `--dry-run` logs the changes it would make without writing anything.                                                                                                      |
 
-The default `<prefix>` is `robot-ptr.xnilsit.github.io` (`--annotation-prefix`).
+The default `<prefix>` is `robot-ptr.nilsit.dev` (`--annotation-prefix`).
 
 ## Usage
 
@@ -39,7 +39,7 @@ kind: Pod
 metadata:
   name: smtp
   annotations:
-    robot-ptr.xnilsit.github.io/ptr: mail.example.com
+    robot-ptr.nilsit.dev/ptr: mail.example.com
 ```
 
 Remember that most receivers also check forward-confirmed reverse DNS, so
@@ -62,7 +62,7 @@ traffic has to leave through that IP (e.g. `hostNetwork` or SNAT).
 
 | Flag                          | Default                           | Description                                   |
 | ----------------------------- | --------------------------------- | --------------------------------------------- |
-| `--annotation-prefix`         | `robot-ptr.xnilsit.github.io`     | Prefix of all annotations.                    |
+| `--annotation-prefix`         | `robot-ptr.nilsit.dev`            | Prefix of all annotations.                    |
 | `--default-ptr`               | `""`                              | PTR when no annotated pod runs on the node.   |
 | `--node-selector`             | `""`                              | Label selector for managed nodes.             |
 | `--reset-delay`               | `1m`                              | Grace period before resetting to the default. |
