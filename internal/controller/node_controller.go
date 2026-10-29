@@ -78,7 +78,8 @@ type NodeReconciler struct {
 	// NodeSelector restricts the nodes that are managed.
 	NodeSelector labels.Selector
 	// HCCMManaged restricts the managed nodes to those whose spec.providerID
-	// hcloud-cloud-controller-manager set to a Hetzner Robot server.
+	// hcloud-cloud-controller-manager set to a Hetzner Robot server
+	// (hrobot://, or hcloud://bm- from older versions).
 	HCCMManaged bool
 	// DefaultPTR is applied when no annotated pod runs on a node. An empty
 	// value deletes the entry, which restores Hetzner's generated name.
@@ -98,6 +99,7 @@ type NodeReconciler struct {
 	mu        sync.Mutex
 	ptrs      map[string]cachedPTR // keyed by IP
 	conflicts map[string]string    // last ConflictingPTR message, keyed by node name
+	notRobot  map[string]string    // last NotRobotIP message, keyed by node name
 }
 
 // cachedPTR is the last known PTR of an IP, normalized like normalizeCurrent,
@@ -119,13 +121,16 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	var node corev1.Node
 	if err := r.Get(ctx, req.NamespacedName, &node); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.setConflicts(req.Name, "")
+			r.forget(req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 	if !r.manages(&node) {
-		return ctrl.Result{}, nil
+		// The PTR is left alone: the node is no longer ours, and a node
+		// skipped by --hccm-managed is not a Robot server anyway.
+		r.forget(node.Name)
+		return ctrl.Result{}, r.setPodLeftAt(ctx, &node, nil)
 	}
 
 	ip, err := r.nodeIP(&node)
@@ -160,6 +165,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err := r.apply(ctx, &node, ip, desired, source); err != nil {
 		return r.robotErrorResult(ctx, &node, ip, err)
 	}
+	r.setNodeMessage(&r.notRobot, node.Name, "")
 	if source == "" {
 		if err := r.setPodLeftAt(ctx, &node, nil); err != nil {
 			return ctrl.Result{}, err
@@ -177,13 +183,27 @@ func (r *NodeReconciler) robotErrorResult(ctx context.Context, node *corev1.Node
 	case robot.IsIPNotFound(err):
 		// Retrying cannot help until the IP is added to the account, so wait
 		// for the next resync instead of backing off.
-		msg := fmt.Sprintf("%s does not belong to the Robot account, set the %s annotation or exclude the node",
-			ip, r.Annotations.IP)
-		log.Info(msg)
-		r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "NotRobotIP", "UpdatePTR", "%s", msg)
+		r.reportNotRobot(ctx, node, ip)
 		return ctrl.Result{RequeueAfter: r.ResyncInterval}, nil
 	}
 	return ctrl.Result{}, err
+}
+
+// reportNotRobot records a NotRobotIP event when ip, or where it came from,
+// changes, instead of on every reconcile.
+func (r *NodeReconciler) reportNotRobot(ctx context.Context, node *corev1.Node, ip string) {
+	msg := fmt.Sprintf("%s does not belong to the Robot account, set the %s annotation or exclude the node "+
+		"with --node-selector or --hccm-managed", ip, r.Annotations.IP)
+	if strings.TrimSpace(node.Annotations[r.Annotations.IP]) != "" {
+		msg = fmt.Sprintf("%s from the %s annotation does not belong to the Robot account", ip, r.Annotations.IP)
+	}
+	log := logf.FromContext(ctx).WithValues("ip", ip)
+	if !r.setNodeMessage(&r.notRobot, node.Name, msg) {
+		log.V(1).Info("ip does not belong to the robot account, retrying at next resync")
+		return
+	}
+	log.Info("ip does not belong to the robot account, retrying at next resync")
+	r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "NotRobotIP", "UpdatePTR", "%s", msg)
 }
 
 // resetWait returns how long the reset of node to its default PTR still has to
@@ -246,11 +266,7 @@ func (r *NodeReconciler) currentPTR(ctx context.Context, ip string) (string, err
 	}
 	current, err := r.Robot.GetPTR(ctx, ip)
 	if err != nil {
-		err = fmt.Errorf("get ptr for %s: %w", ip, err)
-		if robot.IsIPNotFound(err) {
-			r.setCached(ip, cachedPTR{err: err})
-		}
-		return "", err
+		return "", r.cacheIPNotFound(ip, fmt.Errorf("get ptr for %s: %w", ip, err))
 	}
 	current = normalizeCurrent(current)
 	r.setCached(ip, cachedPTR{ptr: current})
@@ -279,7 +295,7 @@ func (r *NodeReconciler) apply(ctx context.Context, node *corev1.Node, ip, desir
 		err = r.Robot.SetPTR(ctx, ip, desired)
 	}
 	if err != nil {
-		return fmt.Errorf("update ptr for %s: %w", ip, err)
+		return r.cacheIPNotFound(ip, fmt.Errorf("update ptr for %s: %w", ip, err))
 	}
 	r.setCached(ip, cachedPTR{ptr: desired})
 
@@ -305,7 +321,7 @@ func (r *NodeReconciler) reportConflicts(node *corev1.Node, desired, source stri
 		msg = fmt.Sprintf("multiple pods request different PTRs (%s), using %q from %s",
 			strings.Join(conflicts, ", "), desired, source)
 	}
-	if r.setConflicts(node.Name, msg) && msg != "" {
+	if r.setNodeMessage(&r.conflicts, node.Name, msg) && msg != "" {
 		r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "ConflictingPTR", "SelectPTR", "%s", msg)
 	}
 }
@@ -435,21 +451,37 @@ func (r *NodeReconciler) setCached(ip string, v cachedPTR) {
 	r.ptrs[ip] = v
 }
 
-// setConflicts stores the conflict message of node, where "" means no
-// conflict, and reports whether it changed.
-func (r *NodeReconciler) setConflicts(node, msg string) bool {
+// cacheIPNotFound caches err if it means ip does not belong to the Robot
+// account, so the IP is not queried again before the next resync. It returns
+// err.
+func (r *NodeReconciler) cacheIPNotFound(ip string, err error) error {
+	if robot.IsIPNotFound(err) {
+		r.setCached(ip, cachedPTR{err: err})
+	}
+	return err
+}
+
+// forget drops the in-memory state of node.
+func (r *NodeReconciler) forget(node string) {
+	r.setNodeMessage(&r.conflicts, node, "")
+	r.setNodeMessage(&r.notRobot, node, "")
+}
+
+// setNodeMessage stores the message of node in m, where "" means none, and
+// reports whether it changed.
+func (r *NodeReconciler) setNodeMessage(m *map[string]string, node, msg string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.conflicts[node] == msg {
+	if (*m)[node] == msg {
 		return false
 	}
 	if msg == "" {
-		delete(r.conflicts, node)
+		delete(*m, node)
 	} else {
-		if r.conflicts == nil {
-			r.conflicts = map[string]string{}
+		if *m == nil {
+			*m = map[string]string{}
 		}
-		r.conflicts[node] = msg
+		(*m)[node] = msg
 	}
 	return true
 }

@@ -50,7 +50,8 @@ func main() {
 		"Prefix of the <prefix>/ptr pod annotation and the <prefix>/default-ptr and <prefix>/ip node annotations.")
 	flag.StringVar(&nodeSelector, "node-selector", "", "Label selector restricting the managed nodes (empty = all nodes).")
 	flag.BoolVar(&hccmManaged, "hccm-managed", false,
-		"Only manage nodes that hcloud-cloud-controller-manager marked as Robot servers (spec.providerID hrobot://...).")
+		"Only manage nodes that hcloud-cloud-controller-manager marked as Robot servers "+
+			"(spec.providerID hrobot://... or the legacy hcloud://bm-...).")
 	flag.StringVar(&defaultPTR, "default-ptr", "",
 		"PTR applied when no annotated pod runs on a node. Empty deletes the entry, restoring Hetzner's default name.")
 	flag.DurationVar(&resetDelay, "reset-delay", time.Minute,

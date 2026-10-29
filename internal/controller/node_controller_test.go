@@ -355,6 +355,9 @@ func TestForeignIPIsNotRetried(t *testing.T) {
 			if f.robot.reads != 2 {
 				t.Fatalf("reads after resync = %d", f.robot.reads)
 			}
+			if n := len(f.rec.Events); n != 0 {
+				t.Fatalf("NotRobotIP event repeated, %d new events", n)
+			}
 		})
 	}
 }
@@ -380,5 +383,50 @@ func TestHCCMManaged(t *testing.T) {
 				t.Fatal("robot api called for unmanaged node")
 			}
 		})
+	}
+}
+
+func TestForeignIPAfterRead(t *testing.T) {
+	// The IP is read while it still belongs to the account and removed from it
+	// before the write.
+	f := newFixture(t, node(nil))
+	f.reconcile(t)
+	f.robot.foreign = map[string]bool{nodeIP: true}
+	if err := f.r.Create(context.Background(), pod("smtp", "mail.example.com", time.Now(), true)); err != nil {
+		t.Fatal(err)
+	}
+
+	if res := f.reconcile(t); res.RequeueAfter != 15*time.Minute {
+		t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+	}
+	f.reconcile(t)
+	if f.robot.writes != 1 {
+		t.Fatalf("writes = %d, want the failed write not to be repeated", f.robot.writes)
+	}
+}
+
+func TestForeignIPFromAnnotation(t *testing.T) {
+	f := newFixture(t, node(map[string]string{DefaultAnnotationPrefix + "/ip": "198.51.100.7"}),
+		pod("smtp", "mail.example.com", time.Now(), true))
+	f.robot.foreign = map[string]bool{"198.51.100.7": true}
+	f.reconcile(t)
+	if ev := <-f.rec.Events; !strings.Contains(ev, "from the "+DefaultAnnotationPrefix+"/ip annotation") {
+		t.Fatalf("expected event blaming the annotation, got %q", ev)
+	}
+}
+
+func TestUnmanagedNodeDropsPodLeftAt(t *testing.T) {
+	f := newFixture(t, node(map[string]string{DefaultAnnotationPrefix + "/pod-left-at": "2026-10-29T11:59:30Z"}))
+	f.robot.ptrs[nodeIP] = "mail.example.com"
+	f.r.HCCMManaged = true
+
+	if res := f.reconcile(t); res.RequeueAfter != 0 {
+		t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+	}
+	if got := f.podLeftAt(t); got != "" {
+		t.Fatalf("pod-left-at not removed: %q", got)
+	}
+	if f.robot.reads != 0 || f.robot.ptrs[nodeIP] != "mail.example.com" {
+		t.Fatalf("unmanaged node touched, reads=%d ptr=%q", f.robot.reads, f.robot.ptrs[nodeIP])
 	}
 }

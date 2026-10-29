@@ -12,7 +12,7 @@ matching PTR on the node it currently runs on.
 The controller reconciles **nodes**. For each node it
 
 1. skips nodes outside `--node-selector` and, with `--hccm-managed`, nodes
-   that are not Robot servers,
+   that are not Robot servers, leaving their PTR as it is,
 2. picks the node's public IPv4 (first public `ExternalIP`, then `InternalIP`,
    or the `<prefix>/ip` node annotation),
 3. looks at the Ready, non-terminating pods on the node that carry the
@@ -29,7 +29,7 @@ node A to B updates both, and a periodic resync corrects drift and missed events
 | Rolling updates | The last PTR is kept for `--reset-delay` (1m) after the pod left before resetting. The start of the delay is stored in the `<prefix>/pod-left-at` node annotation, so it survives controller restarts. |
 | Conflicts       | Several pods with different PTRs on one node: the oldest wins, a `ConflictingPTR` warning event is recorded on the node whenever the conflicting requests change.                                      |
 | Robot API usage | Each IP is read at most once per `--resync-interval` (15m) and written only when it differs. Rate limit responses back off for 5 minutes.                                                              |
-| Non-Robot nodes | IPs outside the Robot account get a `NotRobotIP` warning event and are retried at the next resync. `--hccm-managed` only manages nodes with an `hrobot://` provider ID.                                |
+| Non-Robot nodes | IPs outside the Robot account get a `NotRobotIP` warning event and are retried at each resync. `--hccm-managed` skips nodes without an `hrobot://` (or legacy `hcloud://bm-`) provider ID.             |
 | Memory          | All pods are cached, but only the fields the controller reads: node name, phase, readiness, timestamps and the `<prefix>/ptr` annotation.                                                              |
 | Dry run         | `--dry-run` logs the changes it would make without writing to the Robot API. The `<prefix>/pod-left-at` node annotation is still maintained.                                                           |
 
@@ -90,7 +90,7 @@ The `config` values map to the flags below. The chart derives the rest:
 | `--annotation-prefix`         | `robot-ptr.nilsit.dev`            | Prefix of all annotations.                    |
 | `--default-ptr`               | `""`                              | PTR when no annotated pod runs on the node.   |
 | `--node-selector`             | `""`                              | Label selector for managed nodes.             |
-| `--hccm-managed`              | `false`                           | Skip nodes without `hrobot://` provider ID.   |
+| `--hccm-managed`              | `false`                           | Skip nodes that are not Robot servers.        |
 | `--reset-delay`               | `1m`                              | Grace period before resetting to the default. |
 | `--resync-interval`           | `15m`                             | Robot API drift correction interval.          |
 | `--dry-run`                   | `false`                           | Log changes without applying them.            |

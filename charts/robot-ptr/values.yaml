@@ -8,8 +8,8 @@ config:
   # -- Label selector restricting the managed nodes (empty = all nodes).
   nodeSelector: ""
   # -- Only manage nodes that hcloud-cloud-controller-manager marked as Hetzner
-  # Robot servers (spec.providerID hrobot://...). Use it in clusters that mix
-  # Robot servers with Hetzner Cloud or other nodes.
+  # Robot servers (spec.providerID hrobot://... or the legacy hcloud://bm-...).
+  # Use it in clusters that mix Robot servers with Hetzner Cloud or other nodes.
   hccmManaged: false
   # -- PTR applied when no annotated pod runs on a node. Empty deletes the
   # entry, restoring Hetzner's default name.
