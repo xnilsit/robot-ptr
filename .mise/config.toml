@@ -1,8 +1,12 @@
 [tools]
 actionlint = "1.7.12"
+cosign = "3.1.4"
 go = "1.27.3"
 "go:golang.org/x/vuln/cmd/govulncheck" = "v1.9.0"
 golangci-lint = "2.15.0"
+helm = "4.3.1"
+kubeconform = "0.8.0"
+yq = "4.54.1"
 zizmor = "1.31.1"
 
 [tasks.build]
@@ -36,6 +40,10 @@ run = ["actionlint", "zizmor .github/workflows"]
 [tasks.vulncheck]
 description = "Scan for known vulnerabilities with govulncheck"
 run = "govulncheck ./..."
+
+[tasks.test-chart]
+description = "Lint the Helm chart and check its rendered manifests"
+run = ".mise/scripts/test-chart.sh"
 
 [tasks.run]
 description = "Run the controller against the current kubeconfig without changing any PTR"

@@ -1,0 +1,15 @@
+---
+apiVersion: v2
+name: robot-ptr
+description: Points the reverse DNS of Hetzner Robot servers at the pods running on them
+type: application
+version: 0.0.0 # x-release-please-version
+appVersion: 0.0.0 # x-release-please-version
+kubeVersion: ">=1.31.0-0"
+home: https://github.com/xnilsit/robot-ptr
+sources:
+  - https://github.com/xnilsit/robot-ptr
+dependencies:
+  - name: common
+    repository: oci://ghcr.io/bjw-s-labs/helm
+    version: 5.3.0

@@ -2,6 +2,6 @@
 .github
 .mise
 bin
-deploy
+charts
 *.md
 *.out

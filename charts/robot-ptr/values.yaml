@@ -1,0 +1,93 @@
+---
+# robot-ptr settings. They are rendered into the controller arguments and
+# decide which RBAC rules the chart creates.
+config:
+  # -- Prefix of the <prefix>/ptr pod annotation and the <prefix>/default-ptr,
+  # <prefix>/ip and <prefix>/pod-left-at node annotations.
+  annotationPrefix: robot-ptr.nilsit.dev
+  # -- Label selector restricting the managed nodes (empty = all nodes).
+  nodeSelector: ""
+  # -- PTR applied when no annotated pod runs on a node. Empty deletes the
+  # entry, restoring Hetzner's default name.
+  defaultPTR: ""
+  # -- How long to keep a pod's PTR after it left the node. "0" resets at once
+  # and drops the node patch permission.
+  resetDelay: 1m
+  # -- How often each node's PTR is re-read from the Robot API.
+  resyncInterval: 15m
+  # -- Log PTR changes without applying them.
+  dryRun: false
+  # -- Hetzner Robot webservice URL (empty = https://robot-ws.your-server.de).
+  robotURL: ""
+  # -- Log level: debug, info, error or a positive integer for more verbosity.
+  logLevel: info
+
+# Robot webservice credentials (Settings -> Webservice and app settings).
+credentials:
+  # -- Existing secret with ROBOT_USER and ROBOT_PASSWORD keys. When empty, a
+  # secret is created from user and password.
+  existingSecret: ""
+  user: ""
+  password: ""
+
+# Everything below is passed to the bjw-s common library, see
+# https://bjw-s-labs.github.io/helm-charts/docs/common-library/
+# Leader election (--leader-elect and its Role) is enabled automatically when
+# controllers.main.replicas is greater than 1. With a single replica the
+# Deployment uses the Recreate strategy unless you set one.
+controllers:
+  main:
+    replicas: 1
+    containers:
+      main:
+        image:
+          repository: ghcr.io/xnilsit/robot-ptr
+          tag: "{{ .Chart.AppVersion }}"
+        ports:
+          - name: metrics
+            containerPort: 8080
+          - name: probes
+            containerPort: 8081
+        probes:
+          liveness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /healthz
+                port: probes
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /readyz
+                port: probes
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+
+defaultPodOptions:
+  # The controller talks to the Kubernetes API.
+  automountServiceAccountToken: true
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+service:
+  metrics:
+    controller: main
+    ports:
+      metrics:
+        port: 8080

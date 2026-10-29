@@ -49,15 +49,36 @@ traffic has to leave through that IP (e.g. `hostNetwork` or SNAT).
 
 ## Deploy
 
+The Helm chart is published with every release to
+`oci://ghcr.io/xnilsit/charts/robot-ptr`. It is built on the
+[bjw-s-labs common library](https://bjw-s-labs.github.io/helm-charts/docs/common-library/),
+so all of its values (`controllers`, `defaultPodOptions`, `service`,
+`serviceMonitor`, ...) are available.
+
 1. Create a webservice user in Robot (*Settings → Webservice and app settings*).
-2. Create the credentials secret:
+2. Create the credentials secret, or set `credentials.user` and
+   `credentials.password` to let the chart create it:
 
    ```sh
    kubectl -n kube-system create secret generic robot-ptr-credentials \
      --from-literal=ROBOT_USER=... --from-literal=ROBOT_PASSWORD=...
    ```
 
-3. Apply `deploy/`, check the logs, then drop `--dry-run`.
+3. Install in dry-run mode, check the logs, then set `config.dryRun=false`:
+
+   ```sh
+   helm install robot-ptr oci://ghcr.io/xnilsit/charts/robot-ptr -n kube-system \
+     --set credentials.existingSecret=robot-ptr-credentials --set config.dryRun=true
+   ```
+
+The `config` values map to the flags below. The chart derives the rest:
+
+- With `controllers.main.replicas` above 1 it passes `--leader-elect`, adds the
+  lease Role and switches to a `RollingUpdate` strategy. A single replica runs
+  without leader election and uses `Recreate`, so two controllers never overlap.
+- The node `patch` permission is only granted when `config.resetDelay` is not
+  zero, because only the reset delay writes the `<prefix>/pod-left-at`
+  annotation.
 
 ## Flags
 
@@ -83,6 +104,7 @@ mise install
 mise run test
 mise run lint
 mise run lint-workflows
+mise run test-chart   # helm lint, kubeconform and checks of the rendered manifests
 mise run run   # dry-run against the current kubeconfig, needs ROBOT_USER/ROBOT_PASSWORD
 ```
 
@@ -92,4 +114,6 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org).
 [release-please](https://github.com/googleapis/release-please) keeps a release PR
 open; merging it tags the release and publishes a signed multi-arch image to
 `ghcr.io/xnilsit/robot-ptr` with `X.Y.Z`, `X.Y`, `X` (from 1.0) and `rolling`
-tags. Every push to `main` also publishes `ghcr.io/xnilsit/robot-ptr:main`.
+tags, and the Helm chart to `oci://ghcr.io/xnilsit/charts/robot-ptr`. Both
+are signed with cosign. Every push to `main` also publishes
+`ghcr.io/xnilsit/robot-ptr:main`.
