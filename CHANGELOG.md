@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/xnilsit/robot-ptr/compare/0.1.1...0.1.2) (2026-10-29)
+
+
+### Features
+
+* manage PTR records of Hetzner Cloud servers ([#8](https://github.com/xnilsit/robot-ptr/issues/8)) ([728b97a](https://github.com/xnilsit/robot-ptr/commit/728b97afa035e0fb75b37dd7a9b552148480e3c3))
+
 ## [0.1.1](https://github.com/xnilsit/robot-ptr/compare/0.1.0...0.1.1) (2026-10-29)
 
 
