@@ -83,3 +83,30 @@ func TestRateLimit(t *testing.T) {
 		t.Fatalf("expected rate limit error, got %v", err)
 	}
 }
+
+func TestIPNotFound(t *testing.T) {
+	c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"status":404,"code":"IP_NOT_FOUND","message":"The IP address is not found"}}`))
+	})
+	ctx := context.Background()
+	if _, err := c.GetPTR(ctx, "1.2.3.4"); !IsIPNotFound(err) || IsNotFound(err) {
+		t.Fatalf("GetPTR: expected ip not found error, got %v", err)
+	}
+	if err := c.SetPTR(ctx, "1.2.3.4", "x.example.com"); !IsIPNotFound(err) {
+		t.Fatalf("SetPTR: expected ip not found error, got %v", err)
+	}
+	if err := c.DeletePTR(ctx, "1.2.3.4"); !IsIPNotFound(err) {
+		t.Fatalf("DeletePTR: expected ip not found error, got %v", err)
+	}
+}
+
+func TestUnknownNotFoundIsError(t *testing.T) {
+	// A 404 without a Robot error body, e.g. from a wrong --robot-url.
+	c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	})
+	if _, err := c.GetPTR(context.Background(), "1.2.3.4"); err == nil {
+		t.Fatal("expected error")
+	}
+}

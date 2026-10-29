@@ -57,6 +57,9 @@ Values merged over the user values before the common library renders them.
   {{- with $cfg.logLevel -}}
     {{- $args = append $args (printf "--zap-log-level=%v" .) -}}
   {{- end -}}
+  {{- if $cfg.hccmManaged -}}
+    {{- $args = append $args "--hccm-managed" -}}
+  {{- end -}}
   {{- if $cfg.dryRun -}}
     {{- $args = append $args "--dry-run" -}}
   {{- end -}}

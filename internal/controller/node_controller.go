@@ -77,6 +77,9 @@ type NodeReconciler struct {
 
 	// NodeSelector restricts the nodes that are managed.
 	NodeSelector labels.Selector
+	// HCCMManaged restricts the managed nodes to those whose spec.providerID
+	// hcloud-cloud-controller-manager set to a Hetzner Robot server.
+	HCCMManaged bool
 	// DefaultPTR is applied when no annotated pod runs on a node. An empty
 	// value deletes the entry, which restores Hetzner's generated name.
 	DefaultPTR string
@@ -97,9 +100,11 @@ type NodeReconciler struct {
 	conflicts map[string]string    // last ConflictingPTR message, keyed by node name
 }
 
-// cachedPTR is the last known PTR of an IP, normalized like normalizeCurrent.
+// cachedPTR is the last known PTR of an IP, normalized like normalizeCurrent,
+// or the IP_NOT_FOUND error if the IP does not belong to the Robot account.
 type cachedPTR struct {
 	ptr string
+	err error
 	at  time.Time
 }
 
@@ -145,7 +150,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		desired = r.defaultPTR(&node)
 		wait, err := r.resetWait(ctx, &node, ip, desired)
 		if err != nil {
-			return robotErrorResult(ctx, err)
+			return r.robotErrorResult(ctx, &node, ip, err)
 		}
 		if wait > 0 {
 			log.V(1).Info("delaying reset to default PTR", "remaining", wait)
@@ -153,7 +158,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	}
 	if err := r.apply(ctx, &node, ip, desired, source); err != nil {
-		return robotErrorResult(ctx, err)
+		return r.robotErrorResult(ctx, &node, ip, err)
 	}
 	if source == "" {
 		if err := r.setPodLeftAt(ctx, &node, nil); err != nil {
@@ -163,10 +168,20 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return ctrl.Result{RequeueAfter: r.ResyncInterval}, nil
 }
 
-func robotErrorResult(ctx context.Context, err error) (ctrl.Result, error) {
-	if robot.IsRateLimited(err) {
-		logf.FromContext(ctx).Info("robot api rate limit exceeded, backing off")
+func (r *NodeReconciler) robotErrorResult(ctx context.Context, node *corev1.Node, ip string, err error) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+	switch {
+	case robot.IsRateLimited(err):
+		log.Info("robot api rate limit exceeded, backing off")
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+	case robot.IsIPNotFound(err):
+		// Retrying cannot help until the IP is added to the account, so wait
+		// for the next resync instead of backing off.
+		msg := fmt.Sprintf("%s does not belong to the Robot account, set the %s annotation or exclude the node",
+			ip, r.Annotations.IP)
+		log.Info(msg)
+		r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "NotRobotIP", "UpdatePTR", "%s", msg)
+		return ctrl.Result{RequeueAfter: r.ResyncInterval}, nil
 	}
 	return ctrl.Result{}, err
 }
@@ -227,14 +242,18 @@ func (r *NodeReconciler) setPodLeftAt(ctx context.Context, node *corev1.Node, at
 // resync interval. Hetzner's generated name is returned as "".
 func (r *NodeReconciler) currentPTR(ctx context.Context, ip string) (string, error) {
 	if cached, ok := r.getCached(ip); ok && r.Now().Sub(cached.at) < r.ResyncInterval {
-		return cached.ptr, nil
+		return cached.ptr, cached.err
 	}
 	current, err := r.Robot.GetPTR(ctx, ip)
 	if err != nil {
-		return "", fmt.Errorf("get ptr for %s: %w", ip, err)
+		err = fmt.Errorf("get ptr for %s: %w", ip, err)
+		if robot.IsIPNotFound(err) {
+			r.setCached(ip, cachedPTR{err: err})
+		}
+		return "", err
 	}
 	current = normalizeCurrent(current)
-	r.setCached(ip, current)
+	r.setCached(ip, cachedPTR{ptr: current})
 	return current, nil
 }
 
@@ -250,7 +269,7 @@ func (r *NodeReconciler) apply(ctx context.Context, node *corev1.Node, ip, desir
 
 	if r.DryRun {
 		log.Info("dry-run: would update PTR", "current", current)
-		r.setCached(ip, desired)
+		r.setCached(ip, cachedPTR{ptr: desired})
 		return nil
 	}
 
@@ -262,7 +281,7 @@ func (r *NodeReconciler) apply(ctx context.Context, node *corev1.Node, ip, desir
 	if err != nil {
 		return fmt.Errorf("update ptr for %s: %w", ip, err)
 	}
-	r.setCached(ip, desired)
+	r.setCached(ip, cachedPTR{ptr: desired})
 
 	reason, msg := "PTRUpdated", fmt.Sprintf("set PTR of %s to %q (was %q)", ip, desired, current)
 	if source == "" {
@@ -330,7 +349,18 @@ func (r *NodeReconciler) defaultPTR(node *corev1.Node) string {
 }
 
 func (r *NodeReconciler) manages(node *corev1.Node) bool {
+	if r.HCCMManaged && !isRobotProviderID(node.Spec.ProviderID) {
+		return false
+	}
 	return r.NodeSelector == nil || r.NodeSelector.Matches(labels.Set(node.Labels))
+}
+
+// isRobotProviderID reports whether id is the provider ID
+// hcloud-cloud-controller-manager sets on Hetzner Robot servers. Older
+// versions used hcloud://bm-<server number>, which nodes registered back then
+// keep because a provider ID never changes.
+func isRobotProviderID(id string) bool {
+	return strings.HasPrefix(id, "hrobot://") || strings.HasPrefix(id, "hcloud://bm-")
 }
 
 // nodeIP returns the IP whose PTR is managed: the IP annotation if set,
@@ -395,13 +425,14 @@ func (r *NodeReconciler) getCached(ip string) (cachedPTR, bool) {
 	return v, ok
 }
 
-func (r *NodeReconciler) setCached(ip, ptr string) {
+func (r *NodeReconciler) setCached(ip string, v cachedPTR) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.ptrs == nil {
 		r.ptrs = map[string]cachedPTR{}
 	}
-	r.ptrs[ip] = cachedPTR{ptr: ptr, at: r.Now()}
+	v.at = r.Now()
+	r.ptrs[ip] = v
 }
 
 // setConflicts stores the conflict message of node, where "" means no
@@ -454,7 +485,7 @@ func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		predicate.GenerationChangedPredicate{},
 		predicate.LabelChangedPredicate{},
 		predicate.AnnotationChangedPredicate{},
-		addressesChanged{},
+		nodeFieldsChanged{},
 	)
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -472,14 +503,17 @@ func podToNode(_ context.Context, obj client.Object) []reconcile.Request {
 	return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: pod.Spec.NodeName}}}
 }
 
-// addressesChanged passes node updates that change status.addresses, which
-// GenerationChangedPredicate ignores because nodes have no status generation.
-type addressesChanged struct {
+// nodeFieldsChanged passes node updates that change status.addresses, which
+// GenerationChangedPredicate ignores because nodes have no status generation,
+// or spec.providerID, which hcloud-cloud-controller-manager sets only after
+// the node registered.
+type nodeFieldsChanged struct {
 	predicate.Funcs
 }
 
-func (addressesChanged) Update(e event.UpdateEvent) bool {
+func (nodeFieldsChanged) Update(e event.UpdateEvent) bool {
 	oldNode, ok1 := e.ObjectOld.(*corev1.Node)
 	newNode, ok2 := e.ObjectNew.(*corev1.Node)
-	return ok1 && ok2 && !slices.Equal(oldNode.Status.Addresses, newNode.Status.Addresses)
+	return ok1 && ok2 && (!slices.Equal(oldNode.Status.Addresses, newNode.Status.Addresses) ||
+		oldNode.Spec.ProviderID != newNode.Spec.ProviderID)
 }

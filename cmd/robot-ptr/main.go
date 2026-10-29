@@ -35,6 +35,7 @@ func main() {
 		leaderElect      bool
 		annotationPrefix string
 		nodeSelector     string
+		hccmManaged      bool
 		defaultPTR       string
 		resetDelay       time.Duration
 		resyncInterval   time.Duration
@@ -48,6 +49,8 @@ func main() {
 	flag.StringVar(&annotationPrefix, "annotation-prefix", controller.DefaultAnnotationPrefix,
 		"Prefix of the <prefix>/ptr pod annotation and the <prefix>/default-ptr and <prefix>/ip node annotations.")
 	flag.StringVar(&nodeSelector, "node-selector", "", "Label selector restricting the managed nodes (empty = all nodes).")
+	flag.BoolVar(&hccmManaged, "hccm-managed", false,
+		"Only manage nodes that hcloud-cloud-controller-manager marked as Robot servers (spec.providerID hrobot://...).")
 	flag.StringVar(&defaultPTR, "default-ptr", "",
 		"PTR applied when no annotated pod runs on a node. Empty deletes the entry, restoring Hetzner's default name.")
 	flag.DurationVar(&resetDelay, "reset-delay", time.Minute,
@@ -71,6 +74,7 @@ func main() {
 		leaderElect:    leaderElect,
 		annotations:    controller.AnnotationsWithPrefix(strings.TrimSuffix(annotationPrefix, "/")),
 		nodeSelector:   nodeSelector,
+		hccmManaged:    hccmManaged,
 		defaultPTR:     defaultPTR,
 		resetDelay:     resetDelay,
 		resyncInterval: resyncInterval,
@@ -88,6 +92,7 @@ type runOptions struct {
 	leaderElect    bool
 	annotations    controller.Annotations
 	nodeSelector   string
+	hccmManaged    bool
 	defaultPTR     string
 	resetDelay     time.Duration
 	resyncInterval time.Duration
@@ -135,6 +140,7 @@ func run(o runOptions) error {
 		Recorder:       mgr.GetEventRecorder("robot-ptr"),
 		Annotations:    o.annotations,
 		NodeSelector:   selector,
+		HCCMManaged:    o.hccmManaged,
 		DefaultPTR:     o.defaultPTR,
 		ResetDelay:     o.resetDelay,
 		ResyncInterval: o.resyncInterval,
