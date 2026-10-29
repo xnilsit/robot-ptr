@@ -92,15 +92,15 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: ${{ steps.releasable.outputs.found != 'true' }}
 
-      # Pushes by the GitHub App trigger this workflow again, which then tags
-      # the release.
+      # Auto-merge waits for the required CI checks. The merge is pushed by the
+      # GitHub App, which triggers this workflow again to tag the release.
       - name: Merge the release pull request
         if: ${{ steps.security.outputs.found == 'true' && steps.release.outputs.release_created != 'true' }}
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" --json number --jq '.[0].number')
-          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash
 
   # The release image and chart are built from here, right after the release
   # is created, instead of on `release: published`.

@@ -125,7 +125,8 @@ Security fixes don't wait for anyone. Renovate merges its fix PRs for
 vulnerable Go modules once CI passes. On every push to `main` and once a day,
 govulncheck compares the last release with `main`. If code the release calls
 has a vulnerability that `main` fixes and its highest CVSS score (NVD or GitHub
-advisory) is 7.0 or more, the release PR is merged automatically.
+advisory) is 7.0 or more, the release PR is merged automatically once CI
+passes.
 `mise run security-fixes` shows what that check finds.
 
 ## License
