@@ -46,10 +46,18 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("robot api: %d %s: %s", e.Status, e.Code, e.Message)
 }
 
-// IsNotFound reports whether err means the IP has no reverse DNS entry.
+// IsNotFound reports whether err means the IP has no reverse DNS entry. It is
+// false for IPs that do not belong to the account, see IsIPNotFound.
 func IsNotFound(err error) bool {
 	var apiErr *APIError
-	return errors.As(err, &apiErr) && (apiErr.Code == "RDNS_NOT_FOUND" || apiErr.Status == http.StatusNotFound)
+	return errors.As(err, &apiErr) && apiErr.Code == "RDNS_NOT_FOUND"
+}
+
+// IsIPNotFound reports whether err means the IP does not belong to the Robot
+// account, e.g. because it is not a Hetzner Robot server.
+func IsIPNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Code == "IP_NOT_FOUND"
 }
 
 // IsRateLimited reports whether err is a Robot rate limit response.

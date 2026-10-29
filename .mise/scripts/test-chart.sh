@@ -34,6 +34,7 @@ echo "--- single replica, chart-managed secret"
 m=$(render "${creds[@]}")
 validate "$m"
 check "no leader election flag" "$args | contains([\"--leader-elect\"]) | not" "$m"
+check "no hccm-managed flag" "$args | contains([\"--hccm-managed\"]) | not" "$m"
 check "no leader election role" 'map(select(.kind == "Role" or .kind == "RoleBinding")) | length == 0' "$m"
 check "Recreate strategy" 'map(select(.kind == "Deployment")) | .[0].spec.strategy.type == "Recreate"' "$m"
 check "service account token mounted" 'map(select(.kind == "Deployment")) | .[0].spec.template.spec.automountServiceAccountToken == true' "$m"
@@ -55,10 +56,10 @@ check "existing secret referenced" 'map(select(.kind == "Deployment")) | .[0].sp
 
 echo "--- no reset delay, custom settings"
 m=$(render "${creds[@]}" --set config.resetDelay=0s --set config.dryRun=true --set config.nodeSelector=role=mail \
-  --set controllers.main.strategy=RollingUpdate --set 'controllers.main.containers.main.args={--extra}')
+  --set config.hccmManaged=true --set controllers.main.strategy=RollingUpdate --set 'controllers.main.containers.main.args={--extra}')
 validate "$m"
 check "nodes read-only" "$nodeVerbs | contains([\"patch\"]) | not" "$m"
-check "custom args" "$args | contains([\"--reset-delay=0s\", \"--dry-run\", \"--node-selector=role=mail\", \"--extra\"])" "$m"
+check "custom args" "$args | contains([\"--reset-delay=0s\", \"--dry-run\", \"--node-selector=role=mail\", \"--hccm-managed\", \"--extra\"])" "$m"
 check "user strategy kept" 'map(select(.kind == "Deployment")) | .[0].spec.strategy.type == "RollingUpdate"' "$m"
 
 echo "--- credentials are not evaluated as templates"

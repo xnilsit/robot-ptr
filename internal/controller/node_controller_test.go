@@ -14,29 +14,43 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/xnilsit/robot-ptr/internal/robot"
 )
 
 const nodeIP = "203.0.113.10"
 
 type fakeRobot struct {
-	ptrs   map[string]string
-	writes int
-	reads  int
+	ptrs    map[string]string
+	foreign map[string]bool // IPs that do not belong to the account
+	writes  int
+	reads   int
 }
+
+var errIPNotFound = &robot.APIError{Status: 404, Code: "IP_NOT_FOUND", Message: "The IP address is not found"}
 
 func (f *fakeRobot) GetPTR(_ context.Context, ip string) (string, error) {
 	f.reads++
+	if f.foreign[ip] {
+		return "", errIPNotFound
+	}
 	return f.ptrs[ip], nil
 }
 
 func (f *fakeRobot) SetPTR(_ context.Context, ip, ptr string) error {
 	f.writes++
+	if f.foreign[ip] {
+		return errIPNotFound
+	}
 	f.ptrs[ip] = ptr
 	return nil
 }
 
 func (f *fakeRobot) DeletePTR(_ context.Context, ip string) error {
 	f.writes++
+	if f.foreign[ip] {
+		return errIPNotFound
+	}
 	delete(f.ptrs, ip)
 	return nil
 }
@@ -308,5 +322,111 @@ func TestIPAnnotationOverride(t *testing.T) {
 	f.reconcile(t)
 	if got := f.robot.ptrs["198.51.100.7"]; got != "mail.example.com" {
 		t.Fatalf("ptr = %q", got)
+	}
+}
+
+func TestForeignIPIsNotRetried(t *testing.T) {
+	for name, objs := range map[string][]client.Object{
+		"pod ptr":     {node(nil), pod("smtp", "mail.example.com", time.Now(), true)},
+		"default ptr": {node(map[string]string{DefaultAnnotationPrefix + "/default-ptr": "node-1.example.com"})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, objs...)
+			f.robot.foreign = map[string]bool{nodeIP: true}
+
+			if res := f.reconcile(t); res.RequeueAfter != 15*time.Minute {
+				t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+			}
+			if f.robot.writes != 0 {
+				t.Fatalf("unexpected write")
+			}
+			if ev := <-f.rec.Events; !strings.HasPrefix(ev, "Warning NotRobotIP") {
+				t.Fatalf("expected NotRobotIP event, got %q", ev)
+			}
+
+			// The result is cached like a PTR, so the IP is not re-read before
+			// the next resync.
+			f.reconcile(t)
+			if f.robot.reads != 1 {
+				t.Fatalf("reads = %d", f.robot.reads)
+			}
+			f.now = f.now.Add(15 * time.Minute)
+			f.reconcile(t)
+			if f.robot.reads != 2 {
+				t.Fatalf("reads after resync = %d", f.robot.reads)
+			}
+			if n := len(f.rec.Events); n != 0 {
+				t.Fatalf("NotRobotIP event repeated, %d new events", n)
+			}
+		})
+	}
+}
+
+func TestHCCMManaged(t *testing.T) {
+	for providerID, managed := range map[string]bool{
+		"":                 false,
+		"hcloud://123":     false,
+		"hrobot://123":     true,
+		"hcloud://bm-123":  true,
+		"aws:///eu-1/i-12": false,
+	} {
+		t.Run(providerID, func(t *testing.T) {
+			n := node(nil)
+			n.Spec.ProviderID = providerID
+			f := newFixture(t, n, pod("smtp", "mail.example.com", time.Now(), true))
+			f.r.HCCMManaged = true
+			f.reconcile(t)
+			if got := f.robot.ptrs[nodeIP] == "mail.example.com"; got != managed {
+				t.Fatalf("managed = %v, want %v (reads=%d)", got, managed, f.robot.reads)
+			}
+			if !managed && f.robot.reads != 0 {
+				t.Fatal("robot api called for unmanaged node")
+			}
+		})
+	}
+}
+
+func TestForeignIPAfterRead(t *testing.T) {
+	// The IP is read while it still belongs to the account and removed from it
+	// before the write.
+	f := newFixture(t, node(nil))
+	f.reconcile(t)
+	f.robot.foreign = map[string]bool{nodeIP: true}
+	if err := f.r.Create(context.Background(), pod("smtp", "mail.example.com", time.Now(), true)); err != nil {
+		t.Fatal(err)
+	}
+
+	if res := f.reconcile(t); res.RequeueAfter != 15*time.Minute {
+		t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+	}
+	f.reconcile(t)
+	if f.robot.writes != 1 {
+		t.Fatalf("writes = %d, want the failed write not to be repeated", f.robot.writes)
+	}
+}
+
+func TestForeignIPFromAnnotation(t *testing.T) {
+	f := newFixture(t, node(map[string]string{DefaultAnnotationPrefix + "/ip": "198.51.100.7"}),
+		pod("smtp", "mail.example.com", time.Now(), true))
+	f.robot.foreign = map[string]bool{"198.51.100.7": true}
+	f.reconcile(t)
+	if ev := <-f.rec.Events; !strings.Contains(ev, "from the "+DefaultAnnotationPrefix+"/ip annotation") {
+		t.Fatalf("expected event blaming the annotation, got %q", ev)
+	}
+}
+
+func TestUnmanagedNodeDropsPodLeftAt(t *testing.T) {
+	f := newFixture(t, node(map[string]string{DefaultAnnotationPrefix + "/pod-left-at": "2026-10-29T11:59:30Z"}))
+	f.robot.ptrs[nodeIP] = "mail.example.com"
+	f.r.HCCMManaged = true
+
+	if res := f.reconcile(t); res.RequeueAfter != 0 {
+		t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+	}
+	if got := f.podLeftAt(t); got != "" {
+		t.Fatalf("pod-left-at not removed: %q", got)
+	}
+	if f.robot.reads != 0 || f.robot.ptrs[nodeIP] != "mail.example.com" {
+		t.Fatalf("unmanaged node touched, reads=%d ptr=%q", f.robot.reads, f.robot.ptrs[nodeIP])
 	}
 }
