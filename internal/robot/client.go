@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/xnilsit/robot-ptr/internal/rdns"
 )
 
 // DefaultBaseURL is the Hetzner Robot webservice endpoint.
@@ -46,24 +48,24 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("robot api: %d %s: %s", e.Status, e.Code, e.Message)
 }
 
+// Is makes errors.Is match the IP_NOT_FOUND and RATE_LIMIT_EXCEEDED errors
+// against rdns.ErrIPNotFound and rdns.ErrRateLimited.
+func (e *APIError) Is(target error) bool {
+	switch target {
+	case rdns.ErrIPNotFound:
+		return e.Code == "IP_NOT_FOUND"
+	case rdns.ErrRateLimited:
+		return e.Code == "RATE_LIMIT_EXCEEDED"
+	}
+	return false
+}
+
 // IsNotFound reports whether err means the IP has no reverse DNS entry. It is
-// false for IPs that do not belong to the account, see IsIPNotFound.
+// false for IPs that do not belong to the account, which match
+// rdns.ErrIPNotFound.
 func IsNotFound(err error) bool {
 	var apiErr *APIError
 	return errors.As(err, &apiErr) && apiErr.Code == "RDNS_NOT_FOUND"
-}
-
-// IsIPNotFound reports whether err means the IP does not belong to the Robot
-// account, e.g. because it is not a Hetzner Robot server.
-func IsIPNotFound(err error) bool {
-	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.Code == "IP_NOT_FOUND"
-}
-
-// IsRateLimited reports whether err is a Robot rate limit response.
-func IsRateLimited(err error) bool {
-	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.Code == "RATE_LIMIT_EXCEEDED"
 }
 
 type rdnsEnvelope struct {
@@ -104,6 +106,17 @@ func (c *Client) DeletePTR(ctx context.Context, ip string) error {
 		return nil
 	}
 	return err
+}
+
+// Account names the Robot account in messages.
+func (c *Client) Account() string { return "the Robot account" }
+
+// IsServer reports whether providerID is the one hcloud-cloud-controller-manager
+// sets on Hetzner Robot servers. Older versions used hcloud://bm-<server
+// number>, which nodes registered back then keep because a provider ID never
+// changes.
+func (c *Client) IsServer(providerID string) bool {
+	return strings.HasPrefix(providerID, "hrobot://") || strings.HasPrefix(providerID, "hcloud://bm-")
 }
 
 func (c *Client) do(ctx context.Context, method, ip string, form url.Values, out any) error {

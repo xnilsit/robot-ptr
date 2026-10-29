@@ -2,9 +2,12 @@ package robot
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/xnilsit/robot-ptr/internal/rdns"
 )
 
 func newTestServer(t *testing.T, handler http.HandlerFunc) *Client {
@@ -79,7 +82,7 @@ func TestRateLimit(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"status":403,"code":"RATE_LIMIT_EXCEEDED","message":"Rate limit exceeded"}}`))
 	})
 	err := c.SetPTR(context.Background(), "1.2.3.4", "x.example.com")
-	if !IsRateLimited(err) {
+	if !errors.Is(err, rdns.ErrRateLimited) {
 		t.Fatalf("expected rate limit error, got %v", err)
 	}
 }
@@ -90,13 +93,13 @@ func TestIPNotFound(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"status":404,"code":"IP_NOT_FOUND","message":"The IP address is not found"}}`))
 	})
 	ctx := context.Background()
-	if _, err := c.GetPTR(ctx, "1.2.3.4"); !IsIPNotFound(err) || IsNotFound(err) {
+	if _, err := c.GetPTR(ctx, "1.2.3.4"); !errors.Is(err, rdns.ErrIPNotFound) || IsNotFound(err) {
 		t.Fatalf("GetPTR: expected ip not found error, got %v", err)
 	}
-	if err := c.SetPTR(ctx, "1.2.3.4", "x.example.com"); !IsIPNotFound(err) {
+	if err := c.SetPTR(ctx, "1.2.3.4", "x.example.com"); !errors.Is(err, rdns.ErrIPNotFound) {
 		t.Fatalf("SetPTR: expected ip not found error, got %v", err)
 	}
-	if err := c.DeletePTR(ctx, "1.2.3.4"); !IsIPNotFound(err) {
+	if err := c.DeletePTR(ctx, "1.2.3.4"); !errors.Is(err, rdns.ErrIPNotFound) {
 		t.Fatalf("DeletePTR: expected ip not found error, got %v", err)
 	}
 }

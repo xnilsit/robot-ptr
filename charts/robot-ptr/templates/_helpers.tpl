@@ -54,6 +54,9 @@ Values merged over the user values before the common library renders them.
   {{- with $cfg.robotURL -}}
     {{- $args = append $args (printf "--robot-url=%s" .) -}}
   {{- end -}}
+  {{- with $cfg.hcloudEndpoint -}}
+    {{- $args = append $args (printf "--hcloud-endpoint=%s" .) -}}
+  {{- end -}}
   {{- with $cfg.logLevel -}}
     {{- $args = append $args (printf "--zap-log-level=%v" .) -}}
   {{- end -}}
@@ -90,12 +93,22 @@ controllers:
               {{- else }}
               identifier: credentials
               {{- end }}
-{{- if not .Values.credentials.existingSecret }}
+{{- with .Values.credentials }}
+{{- if not .existingSecret }}
+{{- if not (or .user .password .hcloudToken) }}
+  {{- fail "set credentials.user and credentials.password, credentials.hcloudToken, or credentials.existingSecret" }}
+{{- end }}
 secrets:
   credentials:
     stringData:
-      ROBOT_USER: {{ required "credentials.user or credentials.existingSecret is required" .Values.credentials.user | quote }}
-      ROBOT_PASSWORD: {{ required "credentials.password or credentials.existingSecret is required" .Values.credentials.password | quote }}
+      {{- if or .user .password }}
+      ROBOT_USER: {{ required "credentials.user is required with credentials.password" .user | quote }}
+      ROBOT_PASSWORD: {{ required "credentials.password is required with credentials.user" .password | quote }}
+      {{- end }}
+      {{- with .hcloudToken }}
+      HCLOUD_TOKEN: {{ . | quote }}
+      {{- end }}
+{{- end }}
 {{- end }}
 rbac:
   roles:

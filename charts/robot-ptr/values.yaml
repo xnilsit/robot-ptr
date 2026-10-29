@@ -7,9 +7,11 @@ config:
   annotationPrefix: robot-ptr.nilsit.dev
   # -- Label selector restricting the managed nodes (empty = all nodes).
   nodeSelector: ""
-  # -- Only manage nodes that hcloud-cloud-controller-manager marked as Hetzner
-  # Robot servers (spec.providerID hrobot://... or the legacy hcloud://bm-...).
-  # Use it in clusters that mix Robot servers with Hetzner Cloud or other nodes.
+  # -- Only manage nodes that hcloud-cloud-controller-manager marked as servers
+  # of a configured API: Hetzner Robot servers (spec.providerID hrobot://... or
+  # the legacy hcloud://bm-...) with Robot credentials, Hetzner Cloud servers
+  # (hcloud://...) with a Cloud token. Use it in clusters that mix these with
+  # other nodes, or Robot and Cloud servers with only one of them configured.
   hccmManaged: false
   # -- PTR applied when no annotated pod runs on a node. Empty deletes the
   # entry, restoring Hetzner's default name.
@@ -17,22 +19,29 @@ config:
   # -- How long to keep a pod's PTR after it left the node. "0" resets at once
   # and drops the node patch permission.
   resetDelay: 1m
-  # -- How often each node's PTR is re-read from the Robot API.
+  # -- How often each node's PTR is re-read from the Hetzner API.
   resyncInterval: 15m
   # -- Log PTR changes without applying them.
   dryRun: false
   # -- Hetzner Robot webservice URL (empty = https://robot-ws.your-server.de).
   robotURL: ""
+  # -- Hetzner Cloud API URL (empty = https://api.hetzner.cloud/v1).
+  hcloudEndpoint: ""
   # -- Log level: debug, info, error or a positive integer for more verbosity.
   logLevel: info
 
-# Robot webservice credentials (Settings -> Webservice and app settings).
+# Hetzner credentials. Set the Robot credentials, the Cloud token, or both.
 credentials:
-  # -- Existing secret with ROBOT_USER and ROBOT_PASSWORD keys. When empty, a
-  # secret is created from user and password.
+  # -- Existing secret with ROBOT_USER and ROBOT_PASSWORD and/or HCLOUD_TOKEN
+  # keys. When empty, a secret is created from the values below.
   existingSecret: ""
+  # -- Robot webservice user (Settings -> Webservice and app settings).
   user: ""
+  # -- Robot webservice password.
   password: ""
+  # -- Hetzner Cloud API token with Read & Write permission (project ->
+  # Security -> API tokens). It covers the servers of one project.
+  hcloudToken: ""
 
 # Everything below is passed to the bjw-s common library, see
 # https://bjw-s-labs.github.io/helm-charts/docs/common-library/
