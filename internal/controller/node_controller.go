@@ -90,6 +90,8 @@ type NodeReconciler struct {
 	mu       sync.Mutex
 	applied  map[string]appliedPTR // keyed by IP
 	lastSeen map[string]time.Time  // keyed by node name
+
+	conflicts map[string]string // last ConflictingPTR message, keyed by node name
 }
 
 type appliedPTR struct {
@@ -109,6 +111,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err := r.Get(ctx, req.NamespacedName, &node); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.clearLastSeen(req.Name)
+			r.setConflicts(req.Name, "")
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -129,11 +132,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	desired, source, conflicts := r.desiredFromPods(pods.Items)
-	if len(conflicts) > 0 {
-		r.Recorder.Eventf(&node, nil, corev1.EventTypeWarning, "ConflictingPTR", "SelectPTR",
-			"multiple pods request different PTRs (%s), using %q from %s",
-			strings.Join(conflicts, ", "), desired, source)
-	}
+	r.reportConflicts(&node, desired, source, conflicts)
 
 	now := r.Now()
 	if source != "" {
@@ -207,6 +206,19 @@ func (r *NodeReconciler) apply(ctx context.Context, node *corev1.Node, ip, desir
 	log.Info(msg)
 	r.Recorder.Eventf(node, nil, corev1.EventTypeNormal, reason, "UpdatePTR", "%s", msg)
 	return nil
+}
+
+// reportConflicts records a ConflictingPTR event when the conflicting requests
+// on node change, instead of on every reconcile.
+func (r *NodeReconciler) reportConflicts(node *corev1.Node, desired, source string, conflicts []string) {
+	var msg string
+	if len(conflicts) > 0 {
+		msg = fmt.Sprintf("multiple pods request different PTRs (%s), using %q from %s",
+			strings.Join(conflicts, ", "), desired, source)
+	}
+	if r.setConflicts(node.Name, msg) && msg != "" {
+		r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "ConflictingPTR", "SelectPTR", "%s", msg)
+	}
 }
 
 // desiredFromPods returns the PTR requested by the oldest eligible pod, the
@@ -342,6 +354,25 @@ func (r *NodeReconciler) clearLastSeen(node string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.lastSeen, node)
+}
+
+// setConflicts stores the conflict message of node, where "" means no
+// conflict, and reports whether it changed.
+func (r *NodeReconciler) setConflicts(node, msg string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.conflicts[node] == msg {
+		return false
+	}
+	if msg == "" {
+		delete(r.conflicts, node)
+	} else {
+		if r.conflicts == nil {
+			r.conflicts = map[string]string{}
+		}
+		r.conflicts[node] = msg
+	}
+	return true
 }
 
 // SetupWithManager registers the controller. Nodes are reconciled directly;

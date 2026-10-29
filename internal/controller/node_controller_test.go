@@ -177,6 +177,21 @@ func TestConflictPicksOldest(t *testing.T) {
 	if ev := <-f.rec.Events; !strings.HasPrefix(ev, "Warning ConflictingPTR") {
 		t.Fatalf("expected conflict event, got %q", ev)
 	}
+	<-f.rec.Events // PTRUpdated
+
+	f.reconcile(t)
+	if n := len(f.rec.Events); n != 0 {
+		t.Fatalf("conflict event repeated, %d new events", n)
+	}
+
+	third := pod("third", "c.example.com", base.Add(2*time.Hour), true)
+	if err := f.r.Create(context.Background(), third); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile(t)
+	if ev := <-f.rec.Events; !strings.Contains(ev, "c.example.com") {
+		t.Fatalf("expected updated conflict event, got %q", ev)
+	}
 }
 
 func TestDryRunDoesNotWrite(t *testing.T) {
