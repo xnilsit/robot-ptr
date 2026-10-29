@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/xnilsit/robot-ptr/internal/rdns"
 	"github.com/xnilsit/robot-ptr/internal/robot"
 )
 
@@ -23,6 +25,7 @@ const nodeIP = "203.0.113.10"
 type fakeRobot struct {
 	ptrs    map[string]string
 	foreign map[string]bool // IPs that do not belong to the account
+	err     error           // returned by every call if set
 	writes  int
 	reads   int
 }
@@ -31,6 +34,9 @@ var errIPNotFound = &robot.APIError{Status: 404, Code: "IP_NOT_FOUND", Message: 
 
 func (f *fakeRobot) GetPTR(_ context.Context, ip string) (string, error) {
 	f.reads++
+	if f.err != nil {
+		return "", f.err
+	}
 	if f.foreign[ip] {
 		return "", errIPNotFound
 	}
@@ -78,7 +84,8 @@ func newFixture(t *testing.T, objs ...client.Object) *fixture {
 	}
 	f.r = &NodeReconciler{
 		Client:         c,
-		Robot:          f.robot,
+		RDNS:           f.robot,
+		Robot:          true,
 		Recorder:       f.rec,
 		Annotations:    AnnotationsWithPrefix(DefaultAnnotationPrefix),
 		ResetDelay:     time.Minute,
@@ -93,7 +100,9 @@ func (f *fixture) restart() {
 	r := f.r
 	f.r = &NodeReconciler{
 		Client:         r.Client,
+		RDNS:           r.RDNS,
 		Robot:          r.Robot,
+		Cloud:          r.Cloud,
 		Recorder:       r.Recorder,
 		Annotations:    r.Annotations,
 		ResetDelay:     r.ResetDelay,
@@ -340,8 +349,8 @@ func TestForeignIPIsNotRetried(t *testing.T) {
 			if f.robot.writes != 0 {
 				t.Fatalf("unexpected write")
 			}
-			if ev := <-f.rec.Events; !strings.HasPrefix(ev, "Warning NotRobotIP") {
-				t.Fatalf("expected NotRobotIP event, got %q", ev)
+			if ev := <-f.rec.Events; !strings.HasPrefix(ev, "Warning UnknownIP") {
+				t.Fatalf("expected UnknownIP event, got %q", ev)
 			}
 
 			// The result is cached like a PTR, so the IP is not re-read before
@@ -356,25 +365,37 @@ func TestForeignIPIsNotRetried(t *testing.T) {
 				t.Fatalf("reads after resync = %d", f.robot.reads)
 			}
 			if n := len(f.rec.Events); n != 0 {
-				t.Fatalf("NotRobotIP event repeated, %d new events", n)
+				t.Fatalf("UnknownIP event repeated, %d new events", n)
 			}
 		})
 	}
 }
 
 func TestHCCMManaged(t *testing.T) {
-	for providerID, managed := range map[string]bool{
-		"":                 false,
-		"hcloud://123":     false,
-		"hrobot://123":     true,
-		"hcloud://bm-123":  true,
-		"aws:///eu-1/i-12": false,
+	type apis struct{ robot, cloud bool }
+	for _, tc := range []struct {
+		providerID string
+		apis       apis
+		managed    bool
+	}{
+		{"", apis{true, true}, false},
+		{"aws:///eu-1/i-12", apis{true, true}, false},
+		{"hrobot://123", apis{true, false}, true},
+		{"hcloud://bm-123", apis{true, false}, true},
+		{"hcloud://123", apis{true, false}, false},
+		{"hcloud://123", apis{false, true}, true},
+		{"hrobot://123", apis{false, true}, false},
+		{"hcloud://bm-123", apis{false, true}, false},
+		{"hcloud://123", apis{true, true}, true},
+		{"hrobot://123", apis{true, true}, true},
 	} {
-		t.Run(providerID, func(t *testing.T) {
+		providerID, managed := tc.providerID, tc.managed
+		t.Run(fmt.Sprintf("%s robot=%v cloud=%v", providerID, tc.apis.robot, tc.apis.cloud), func(t *testing.T) {
 			n := node(nil)
 			n.Spec.ProviderID = providerID
 			f := newFixture(t, n, pod("smtp", "mail.example.com", time.Now(), true))
 			f.r.HCCMManaged = true
+			f.r.Robot, f.r.Cloud = tc.apis.robot, tc.apis.cloud
 			f.reconcile(t)
 			if got := f.robot.ptrs[nodeIP] == "mail.example.com"; got != managed {
 				t.Fatalf("managed = %v, want %v (reads=%d)", got, managed, f.robot.reads)
@@ -412,6 +433,41 @@ func TestForeignIPFromAnnotation(t *testing.T) {
 	f.reconcile(t)
 	if ev := <-f.rec.Events; !strings.Contains(ev, "from the "+DefaultAnnotationPrefix+"/ip annotation") {
 		t.Fatalf("expected event blaming the annotation, got %q", ev)
+	}
+}
+
+func TestUnknownIPNamesAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		robot, cloud bool
+		want         string
+	}{
+		{true, false, "does not belong to the Robot account,"},
+		{false, true, "does not belong to the Cloud project,"},
+		{true, true, "does not belong to the Robot account or the Cloud project,"},
+	} {
+		f := newFixture(t, node(nil), pod("smtp", "mail.example.com", time.Now(), true))
+		f.r.Robot, f.r.Cloud = tc.robot, tc.cloud
+		// Cloud and Multi wrap rdns.ErrIPNotFound instead of returning a Robot error.
+		f.robot.err = fmt.Errorf("lookup: %w", rdns.ErrIPNotFound)
+		f.reconcile(t)
+		if ev := <-f.rec.Events; !strings.Contains(ev, tc.want) {
+			t.Fatalf("robot=%v cloud=%v: event %q does not contain %q", tc.robot, tc.cloud, ev, tc.want)
+		}
+	}
+}
+
+func TestRateLimitBacksOff(t *testing.T) {
+	for name, err := range map[string]error{
+		"robot": &robot.APIError{Status: 403, Code: "RATE_LIMIT_EXCEEDED", Message: "Rate limit exceeded"},
+		"cloud": fmt.Errorf("%w: hcloud: rate limit exceeded (rate_limit_exceeded)", rdns.ErrRateLimited),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, node(nil), pod("smtp", "mail.example.com", time.Now(), true))
+			f.robot.err = err
+			if res := f.reconcile(t); res.RequeueAfter != 5*time.Minute {
+				t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+			}
+		})
 	}
 }
 

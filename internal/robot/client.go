@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/xnilsit/robot-ptr/internal/rdns"
 )
 
 // DefaultBaseURL is the Hetzner Robot webservice endpoint.
@@ -46,6 +48,18 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("robot api: %d %s: %s", e.Status, e.Code, e.Message)
 }
 
+// Is makes errors.Is match the IP_NOT_FOUND and RATE_LIMIT_EXCEEDED errors
+// against rdns.ErrIPNotFound and rdns.ErrRateLimited.
+func (e *APIError) Is(target error) bool {
+	switch target {
+	case rdns.ErrIPNotFound:
+		return e.Code == "IP_NOT_FOUND"
+	case rdns.ErrRateLimited:
+		return e.Code == "RATE_LIMIT_EXCEEDED"
+	}
+	return false
+}
+
 // IsNotFound reports whether err means the IP has no reverse DNS entry. It is
 // false for IPs that do not belong to the account, see IsIPNotFound.
 func IsNotFound(err error) bool {
@@ -56,14 +70,12 @@ func IsNotFound(err error) bool {
 // IsIPNotFound reports whether err means the IP does not belong to the Robot
 // account, e.g. because it is not a Hetzner Robot server.
 func IsIPNotFound(err error) bool {
-	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.Code == "IP_NOT_FOUND"
+	return errors.Is(err, rdns.ErrIPNotFound)
 }
 
 // IsRateLimited reports whether err is a Robot rate limit response.
 func IsRateLimited(err error) bool {
-	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.Code == "RATE_LIMIT_EXCEEDED"
+	return errors.Is(err, rdns.ErrRateLimited)
 }
 
 type rdnsEnvelope struct {

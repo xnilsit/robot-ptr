@@ -17,7 +17,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	"github.com/hetznercloud/hcloud-go/v2/hcloud"
+
+	"github.com/xnilsit/robot-ptr/internal/cloud"
 	"github.com/xnilsit/robot-ptr/internal/controller"
+	"github.com/xnilsit/robot-ptr/internal/rdns"
 	"github.com/xnilsit/robot-ptr/internal/robot"
 )
 
@@ -41,6 +45,7 @@ func main() {
 		resyncInterval   time.Duration
 		dryRun           bool
 		robotURL         string
+		hcloudEndpoint   string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"Address the metrics endpoint binds to. Use 0 to disable.")
@@ -50,16 +55,17 @@ func main() {
 		"Prefix of the <prefix>/ptr pod annotation and the <prefix>/default-ptr and <prefix>/ip node annotations.")
 	flag.StringVar(&nodeSelector, "node-selector", "", "Label selector restricting the managed nodes (empty = all nodes).")
 	flag.BoolVar(&hccmManaged, "hccm-managed", false,
-		"Only manage nodes that hcloud-cloud-controller-manager marked as Robot servers "+
-			"(spec.providerID hrobot://... or the legacy hcloud://bm-...).")
+		"Only manage nodes that hcloud-cloud-controller-manager marked as servers of an enabled API: "+
+			"Robot servers (spec.providerID hrobot://... or the legacy hcloud://bm-...) and Cloud servers (hcloud://...).")
 	flag.StringVar(&defaultPTR, "default-ptr", "",
 		"PTR applied when no annotated pod runs on a node. Empty deletes the entry, restoring Hetzner's default name.")
 	flag.DurationVar(&resetDelay, "reset-delay", time.Minute,
 		"How long to keep a pod's PTR after it left the node before resetting to the default.")
 	flag.DurationVar(&resyncInterval, "resync-interval", 15*time.Minute,
-		"How often each node's PTR is re-read from the Robot API to correct drift.")
+		"How often each node's PTR is re-read from the Hetzner API to correct drift.")
 	flag.BoolVar(&dryRun, "dry-run", false, "Log PTR changes without applying them.")
 	flag.StringVar(&robotURL, "robot-url", robot.DefaultBaseURL, "Hetzner Robot webservice URL.")
+	flag.StringVar(&hcloudEndpoint, "hcloud-endpoint", hcloud.Endpoint, "Hetzner Cloud API URL.")
 
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
@@ -81,6 +87,7 @@ func main() {
 		resyncInterval: resyncInterval,
 		dryRun:         dryRun,
 		robotURL:       robotURL,
+		hcloudEndpoint: hcloudEndpoint,
 	}); err != nil {
 		log.Error(err, "fatal")
 		os.Exit(1)
@@ -99,12 +106,18 @@ type runOptions struct {
 	resyncInterval time.Duration
 	dryRun         bool
 	robotURL       string
+	hcloudEndpoint string
 }
 
 func run(o runOptions) error {
 	user, pass := os.Getenv("ROBOT_USER"), os.Getenv("ROBOT_PASSWORD")
-	if user == "" || pass == "" {
-		return errors.New("ROBOT_USER and ROBOT_PASSWORD must be set")
+	token := os.Getenv("HCLOUD_TOKEN")
+	useRobot, useCloud := user != "" || pass != "", token != ""
+	if useRobot && (user == "" || pass == "") {
+		return errors.New("ROBOT_USER and ROBOT_PASSWORD must be set together")
+	}
+	if !useRobot && !useCloud {
+		return errors.New("set ROBOT_USER and ROBOT_PASSWORD, HCLOUD_TOKEN, or both")
 	}
 	if o.resyncInterval <= 0 {
 		return errors.New("--resync-interval must be positive")
@@ -132,12 +145,27 @@ func run(o runOptions) error {
 		return err
 	}
 
-	rc := robot.NewClient(user, pass)
-	rc.BaseURL = o.robotURL
+	var clients []rdns.Client
+	if useRobot {
+		rc := robot.NewClient(user, pass)
+		rc.BaseURL = o.robotURL
+		clients = append(clients, rc)
+	}
+	if useCloud {
+		clients = append(clients, cloud.NewClient(token,
+			hcloud.WithEndpoint(o.hcloudEndpoint), hcloud.WithApplication("robot-ptr", Version)))
+	}
+	rdnsClient := clients[0]
+	if len(clients) > 1 {
+		rdnsClient = rdns.NewMulti(clients...)
+	}
+	ctrl.Log.WithName("setup").Info("hetzner apis", "robot", useRobot, "cloud", useCloud)
 
 	if err := (&controller.NodeReconciler{
 		Client:         mgr.GetClient(),
-		Robot:          rc,
+		RDNS:           rdnsClient,
+		Robot:          useRobot,
+		Cloud:          useCloud,
 		Recorder:       mgr.GetEventRecorder("robot-ptr"),
 		Annotations:    o.annotations,
 		NodeSelector:   selector,

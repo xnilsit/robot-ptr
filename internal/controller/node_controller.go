@@ -1,9 +1,10 @@
-// Package controller reconciles the Hetzner Robot reverse DNS entry of each
-// node from the annotations of the pods scheduled on it.
+// Package controller reconciles the Hetzner reverse DNS entry of each node
+// from the annotations of the pods scheduled on it.
 package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -25,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/xnilsit/robot-ptr/internal/robot"
+	"github.com/xnilsit/robot-ptr/internal/rdns"
 )
 
 const (
@@ -36,13 +37,6 @@ const (
 	// podNodeNameField indexes pods by spec.nodeName.
 	podNodeNameField = "spec.nodeName"
 )
-
-// RDNS is the subset of the Robot API used by the controller.
-type RDNS interface {
-	GetPTR(ctx context.Context, ip string) (string, error)
-	SetPTR(ctx context.Context, ip, ptr string) error
-	DeletePTR(ctx context.Context, ip string) error
-}
 
 // Annotations holds the annotation keys used by the controller.
 type Annotations struct {
@@ -71,15 +65,21 @@ func AnnotationsWithPrefix(prefix string) Annotations {
 // of the pod running on it, and resets it to a default once no such pod is left.
 type NodeReconciler struct {
 	client.Client
-	Robot       RDNS
+	RDNS        rdns.Client
 	Recorder    events.EventRecorder
 	Annotations Annotations
+
+	// Robot and Cloud tell whether RDNS manages Hetzner Robot and Hetzner Cloud
+	// IPs. They decide which nodes HCCMManaged keeps and how foreign IPs are
+	// reported.
+	Robot, Cloud bool
 
 	// NodeSelector restricts the nodes that are managed.
 	NodeSelector labels.Selector
 	// HCCMManaged restricts the managed nodes to those whose spec.providerID
-	// hcloud-cloud-controller-manager set to a Hetzner Robot server
-	// (hrobot://, or hcloud://bm- from older versions).
+	// hcloud-cloud-controller-manager set to a server of an enabled API: a
+	// Robot server (hrobot://, or hcloud://bm- from older versions) or a Cloud
+	// server (hcloud://).
 	HCCMManaged bool
 	// DefaultPTR is applied when no annotated pod runs on a node. An empty
 	// value deletes the entry, which restores Hetzner's generated name.
@@ -88,7 +88,7 @@ type NodeReconciler struct {
 	// the node, so rolling updates do not flap the record. The start of the
 	// delay is stored in the PodLeftAt node annotation.
 	ResetDelay time.Duration
-	// ResyncInterval is how often the Robot API is re-read to correct drift.
+	// ResyncInterval is how often the Hetzner APIs are re-read to correct drift.
 	ResyncInterval time.Duration
 	// DryRun logs changes instead of applying them.
 	DryRun bool
@@ -99,11 +99,11 @@ type NodeReconciler struct {
 	mu        sync.Mutex
 	ptrs      map[string]cachedPTR // keyed by IP
 	conflicts map[string]string    // last ConflictingPTR message, keyed by node name
-	notRobot  map[string]string    // last NotRobotIP message, keyed by node name
+	unknownIP map[string]string    // last UnknownIP message, keyed by node name
 }
 
 // cachedPTR is the last known PTR of an IP, normalized like normalizeCurrent,
-// or the IP_NOT_FOUND error if the IP does not belong to the Robot account.
+// or the rdns.ErrIPNotFound error if the IP does not belong to any account.
 type cachedPTR struct {
 	ptr string
 	err error
@@ -128,7 +128,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 	if !r.manages(&node) {
 		// The PTR is left alone: the node is no longer ours, and a node
-		// skipped by --hccm-managed is not a Robot server anyway.
+		// skipped by --hccm-managed is not a server of an enabled API anyway.
 		r.forget(node.Name)
 		return ctrl.Result{}, r.setPodLeftAt(ctx, &node, nil)
 	}
@@ -155,7 +155,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		desired = r.defaultPTR(&node)
 		wait, err := r.resetWait(ctx, &node, ip, desired)
 		if err != nil {
-			return r.robotErrorResult(ctx, &node, ip, err)
+			return r.rdnsErrorResult(ctx, &node, ip, err)
 		}
 		if wait > 0 {
 			log.V(1).Info("delaying reset to default PTR", "remaining", wait)
@@ -163,9 +163,9 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	}
 	if err := r.apply(ctx, &node, ip, desired, source); err != nil {
-		return r.robotErrorResult(ctx, &node, ip, err)
+		return r.rdnsErrorResult(ctx, &node, ip, err)
 	}
-	r.setNodeMessage(&r.notRobot, node.Name, "")
+	r.setNodeMessage(&r.unknownIP, node.Name, "")
 	if source == "" {
 		if err := r.setPodLeftAt(ctx, &node, nil); err != nil {
 			return ctrl.Result{}, err
@@ -174,36 +174,47 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return ctrl.Result{RequeueAfter: r.ResyncInterval}, nil
 }
 
-func (r *NodeReconciler) robotErrorResult(ctx context.Context, node *corev1.Node, ip string, err error) (ctrl.Result, error) {
+func (r *NodeReconciler) rdnsErrorResult(ctx context.Context, node *corev1.Node, ip string, err error) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 	switch {
-	case robot.IsRateLimited(err):
-		log.Info("robot api rate limit exceeded, backing off")
+	case errors.Is(err, rdns.ErrRateLimited):
+		log.Info("hetzner api rate limit exceeded, backing off", "error", err.Error())
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
-	case robot.IsIPNotFound(err):
+	case errors.Is(err, rdns.ErrIPNotFound):
 		// Retrying cannot help until the IP is added to the account, so wait
 		// for the next resync instead of backing off.
-		r.reportNotRobot(ctx, node, ip)
+		r.reportUnknownIP(ctx, node, ip)
 		return ctrl.Result{RequeueAfter: r.ResyncInterval}, nil
 	}
 	return ctrl.Result{}, err
 }
 
-// reportNotRobot records a NotRobotIP event when ip, or where it came from,
+// reportUnknownIP records an UnknownIP event when ip, or where it came from,
 // changes, instead of on every reconcile.
-func (r *NodeReconciler) reportNotRobot(ctx context.Context, node *corev1.Node, ip string) {
-	msg := fmt.Sprintf("%s does not belong to the Robot account, set the %s annotation or exclude the node "+
-		"with --node-selector or --hccm-managed", ip, r.Annotations.IP)
+func (r *NodeReconciler) reportUnknownIP(ctx context.Context, node *corev1.Node, ip string) {
+	msg := fmt.Sprintf("%s does not belong to %s, set the %s annotation or exclude the node "+
+		"with --node-selector or --hccm-managed", ip, r.accounts(), r.Annotations.IP)
 	if strings.TrimSpace(node.Annotations[r.Annotations.IP]) != "" {
-		msg = fmt.Sprintf("%s from the %s annotation does not belong to the Robot account", ip, r.Annotations.IP)
+		msg = fmt.Sprintf("%s from the %s annotation does not belong to %s", ip, r.Annotations.IP, r.accounts())
 	}
 	log := logf.FromContext(ctx).WithValues("ip", ip)
-	if !r.setNodeMessage(&r.notRobot, node.Name, msg) {
-		log.V(1).Info("ip does not belong to the robot account, retrying at next resync")
+	if !r.setNodeMessage(&r.unknownIP, node.Name, msg) {
+		log.V(1).Info("ip does not belong to any configured account, retrying at next resync")
 		return
 	}
-	log.Info("ip does not belong to the robot account, retrying at next resync")
-	r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "NotRobotIP", "UpdatePTR", "%s", msg)
+	log.Info("ip does not belong to any configured account, retrying at next resync")
+	r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "UnknownIP", "UpdatePTR", "%s", msg)
+}
+
+// accounts describes the accounts RDNS manages, for messages.
+func (r *NodeReconciler) accounts() string {
+	switch {
+	case r.Robot && r.Cloud:
+		return "the Robot account or the Cloud project"
+	case r.Cloud:
+		return "the Cloud project"
+	}
+	return "the Robot account"
 }
 
 // resetWait returns how long the reset of node to its default PTR still has to
@@ -258,13 +269,13 @@ func (r *NodeReconciler) setPodLeftAt(ctx context.Context, node *corev1.Node, at
 	return nil
 }
 
-// currentPTR returns the PTR of ip, read from the Robot API at most once per
+// currentPTR returns the PTR of ip, read from the Hetzner API at most once per
 // resync interval. Hetzner's generated name is returned as "".
 func (r *NodeReconciler) currentPTR(ctx context.Context, ip string) (string, error) {
 	if cached, ok := r.getCached(ip); ok && r.Now().Sub(cached.at) < r.ResyncInterval {
 		return cached.ptr, cached.err
 	}
-	current, err := r.Robot.GetPTR(ctx, ip)
+	current, err := r.RDNS.GetPTR(ctx, ip)
 	if err != nil {
 		return "", r.cacheIPNotFound(ip, fmt.Errorf("get ptr for %s: %w", ip, err))
 	}
@@ -290,9 +301,9 @@ func (r *NodeReconciler) apply(ctx context.Context, node *corev1.Node, ip, desir
 	}
 
 	if desired == "" {
-		err = r.Robot.DeletePTR(ctx, ip)
+		err = r.RDNS.DeletePTR(ctx, ip)
 	} else {
-		err = r.Robot.SetPTR(ctx, ip, desired)
+		err = r.RDNS.SetPTR(ctx, ip, desired)
 	}
 	if err != nil {
 		return r.cacheIPNotFound(ip, fmt.Errorf("update ptr for %s: %w", ip, err))
@@ -365,10 +376,16 @@ func (r *NodeReconciler) defaultPTR(node *corev1.Node) string {
 }
 
 func (r *NodeReconciler) manages(node *corev1.Node) bool {
-	if r.HCCMManaged && !isRobotProviderID(node.Spec.ProviderID) {
+	if r.HCCMManaged && !r.isEnabledServer(node.Spec.ProviderID) {
 		return false
 	}
 	return r.NodeSelector == nil || r.NodeSelector.Matches(labels.Set(node.Labels))
+}
+
+// isEnabledServer reports whether the provider ID belongs to a server of an
+// enabled API.
+func (r *NodeReconciler) isEnabledServer(providerID string) bool {
+	return (r.Robot && isRobotProviderID(providerID)) || (r.Cloud && isCloudProviderID(providerID))
 }
 
 // isRobotProviderID reports whether id is the provider ID
@@ -377,6 +394,12 @@ func (r *NodeReconciler) manages(node *corev1.Node) bool {
 // keep because a provider ID never changes.
 func isRobotProviderID(id string) bool {
 	return strings.HasPrefix(id, "hrobot://") || strings.HasPrefix(id, "hcloud://bm-")
+}
+
+// isCloudProviderID reports whether id is the provider ID
+// hcloud-cloud-controller-manager sets on Hetzner Cloud servers.
+func isCloudProviderID(id string) bool {
+	return strings.HasPrefix(id, "hcloud://") && !isRobotProviderID(id)
 }
 
 // nodeIP returns the IP whose PTR is managed: the IP annotation if set,
@@ -451,11 +474,10 @@ func (r *NodeReconciler) setCached(ip string, v cachedPTR) {
 	r.ptrs[ip] = v
 }
 
-// cacheIPNotFound caches err if it means ip does not belong to the Robot
-// account, so the IP is not queried again before the next resync. It returns
-// err.
+// cacheIPNotFound caches err if it means ip does not belong to any account,
+// so the IP is not queried again before the next resync. It returns err.
 func (r *NodeReconciler) cacheIPNotFound(ip string, err error) error {
-	if robot.IsIPNotFound(err) {
+	if errors.Is(err, rdns.ErrIPNotFound) {
 		r.setCached(ip, cachedPTR{err: err})
 	}
 	return err
@@ -464,7 +486,7 @@ func (r *NodeReconciler) cacheIPNotFound(ip string, err error) error {
 // forget drops the in-memory state of node.
 func (r *NodeReconciler) forget(node string) {
 	r.setNodeMessage(&r.conflicts, node, "")
-	r.setNodeMessage(&r.notRobot, node, "")
+	r.setNodeMessage(&r.unknownIP, node, "")
 }
 
 // setNodeMessage stores the message of node in m, where "" means none, and

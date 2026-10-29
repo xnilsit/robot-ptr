@@ -62,6 +62,17 @@ check "nodes read-only" "$nodeVerbs | contains([\"patch\"]) | not" "$m"
 check "custom args" "$args | contains([\"--reset-delay=0s\", \"--dry-run\", \"--node-selector=role=mail\", \"--hccm-managed\", \"--extra\"])" "$m"
 check "user strategy kept" 'map(select(.kind == "Deployment")) | .[0].spec.strategy.type == "RollingUpdate"' "$m"
 
+echo "--- hcloud token only"
+m=$(render --set credentials.hcloudToken=token --set config.hcloudEndpoint=http://hcloud.test)
+validate "$m"
+check "token in secret" 'map(select(.kind == "Secret")) | .[0].stringData.HCLOUD_TOKEN == "token"' "$m"
+check "no robot credentials in secret" 'map(select(.kind == "Secret")) | .[0].stringData | has("ROBOT_USER") | not' "$m"
+check "hcloud endpoint flag" "$args | contains([\"--hcloud-endpoint=http://hcloud.test\"])" "$m"
+
+echo "--- robot credentials and hcloud token"
+m=$(render "${creds[@]}" --set credentials.hcloudToken=token)
+check "both in secret" 'map(select(.kind == "Secret")) | .[0].stringData | keys | sort | join(",") == "HCLOUD_TOKEN,ROBOT_PASSWORD,ROBOT_USER"' "$m"
+
 echo "--- credentials are not evaluated as templates"
 m=$(render --set credentials.user=user --set-literal 'credentials.password={{ .Release.Name }}')
 check "password kept verbatim" 'map(select(.kind == "Secret")) | .[0].stringData.ROBOT_PASSWORD == "{{ .Release.Name }}"' "$m"
@@ -72,3 +83,9 @@ if render >/dev/null 2>&1; then
   exit 1
 fi
 echo "ok: rendering without credentials fails"
+
+if render --set credentials.user=user --set credentials.hcloudToken=token >/dev/null 2>&1; then
+  echo "FAIL: rendering with a Robot user but no password succeeded" >&2
+  exit 1
+fi
+echo "ok: rendering with incomplete Robot credentials fails"
