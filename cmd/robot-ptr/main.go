@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -122,6 +124,16 @@ func run(o runOptions) error {
 	if o.resyncInterval <= 0 {
 		return errors.New("--resync-interval must be positive")
 	}
+	if useRobot {
+		if err := checkURL("--robot-url", o.robotURL); err != nil {
+			return err
+		}
+	}
+	if useCloud {
+		if err := checkURL("--hcloud-endpoint", o.hcloudEndpoint); err != nil {
+			return err
+		}
+	}
 
 	selector, err := labels.Parse(o.nodeSelector)
 	if err != nil {
@@ -164,8 +176,6 @@ func run(o runOptions) error {
 	if err := (&controller.NodeReconciler{
 		Client:         mgr.GetClient(),
 		RDNS:           rdnsClient,
-		Robot:          useRobot,
-		Cloud:          useCloud,
 		Recorder:       mgr.GetEventRecorder("robot-ptr"),
 		Annotations:    o.annotations,
 		NodeSelector:   selector,
@@ -185,4 +195,14 @@ func run(o runOptions) error {
 		return err
 	}
 	return mgr.Start(ctrl.SetupSignalHandler())
+}
+
+// checkURL rejects values of the URL flag name that every API call would fail
+// on, such as an empty one.
+func checkURL(name, v string) error {
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%s must be an http(s) URL, got %q", name, v)
+	}
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -25,6 +26,12 @@ type Client interface {
 	GetPTR(ctx context.Context, ip string) (string, error)
 	SetPTR(ctx context.Context, ip, ptr string) error
 	DeletePTR(ctx context.Context, ip string) error
+
+	// Account names the account in messages, e.g. "the Robot account".
+	Account() string
+	// IsServer reports whether providerID, as set by
+	// hcloud-cloud-controller-manager, is a server of the account's API.
+	IsServer(providerID string) bool
 }
 
 // Multi is a Client over several accounts. It finds the account an IP belongs
@@ -41,34 +48,10 @@ func NewMulti(clients ...Client) *Multi {
 	return &Multi{clients: clients, owners: map[string]Client{}}
 }
 
-// GetPTR reads ip from the client it belongs to. If that client no longer
-// knows ip, the other clients are asked again.
+// GetPTR reads ip from the client it belongs to.
 func (m *Multi) GetPTR(ctx context.Context, ip string) (string, error) {
-	if owner := m.owner(ip); owner != nil {
-		ptr, err := owner.GetPTR(ctx, ip)
-		if !errors.Is(err, ErrIPNotFound) {
-			return ptr, err
-		}
-		m.setOwner(ip, nil)
-	}
-
-	// A failing client must not block the IPs of the others, so its error is
-	// only returned if no client knows ip.
-	var firstErr error
-	for _, c := range m.clients {
-		ptr, err := c.GetPTR(ctx, ip)
-		if err == nil {
-			m.setOwner(ip, c)
-			return ptr, nil
-		}
-		if firstErr == nil && !errors.Is(err, ErrIPNotFound) {
-			firstErr = err
-		}
-	}
-	if firstErr != nil {
-		return "", firstErr
-	}
-	return "", errNotOwned
+	_, ptr, err := m.find(ctx, ip)
+	return ptr, err
 }
 
 // SetPTR sets the PTR of ip in the account it belongs to.
@@ -81,13 +64,66 @@ func (m *Multi) DeletePTR(ctx context.Context, ip string) error {
 	return m.write(ctx, ip, func(c Client) error { return c.DeletePTR(ctx, ip) })
 }
 
+// Account names the accounts of all clients.
+func (m *Multi) Account() string {
+	names := make([]string, len(m.clients))
+	for i, c := range m.clients {
+		names[i] = c.Account()
+	}
+	return strings.Join(names, " or ")
+}
+
+// IsServer reports whether providerID is a server of any client's API.
+func (m *Multi) IsServer(providerID string) bool {
+	for _, c := range m.clients {
+		if c.IsServer(providerID) {
+			return true
+		}
+	}
+	return false
+}
+
+// find returns the client ip belongs to and the PTR read from it. If the
+// remembered client no longer knows ip, the other clients are asked.
+func (m *Multi) find(ctx context.Context, ip string) (Client, string, error) {
+	owner := m.owner(ip)
+	if owner != nil {
+		ptr, err := owner.GetPTR(ctx, ip)
+		if !errors.Is(err, ErrIPNotFound) {
+			return owner, ptr, err
+		}
+		m.setOwner(ip, nil)
+	}
+
+	// A failing client must not block the IPs of the others, so its error is
+	// only returned if no client knows ip.
+	var firstErr error
+	for _, c := range m.clients {
+		if c == owner {
+			continue // it just reported ip as not found
+		}
+		ptr, err := c.GetPTR(ctx, ip)
+		if err == nil {
+			m.setOwner(ip, c)
+			return c, ptr, nil
+		}
+		if firstErr == nil && !errors.Is(err, ErrIPNotFound) {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return nil, "", firstErr
+	}
+	return nil, "", errNotOwned
+}
+
 func (m *Multi) write(ctx context.Context, ip string, fn func(Client) error) error {
 	owner := m.owner(ip)
 	if owner == nil {
-		if _, err := m.GetPTR(ctx, ip); err != nil {
+		var err error
+		if owner, _, err = m.find(ctx, ip); err != nil {
 			return err
 		}
-		owner = m.owner(ip)
 	}
 	err := fn(owner)
 	if errors.Is(err, ErrIPNotFound) {

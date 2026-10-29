@@ -33,7 +33,6 @@ func newTestServer(t *testing.T, handler http.HandlerFunc) *Client {
 	}))
 	t.Cleanup(srv.Close)
 	return NewClient("token", hcloud.WithEndpoint(srv.URL),
-		hcloud.WithRetryOpts(hcloud.RetryOpts{MaxRetries: 0}),
 		hcloud.WithPollOpts(hcloud.PollOpts{BackoffFunc: hcloud.ConstantBackoff(time.Millisecond)}))
 }
 
@@ -62,13 +61,97 @@ func TestGetPTRNotPrimaryIP(t *testing.T) {
 	}
 }
 
+func TestGetPTRCachedID(t *testing.T) {
+	var lookups, gets int
+	c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/primary_ips":
+			lookups++
+			_, _ = w.Write([]byte(primaryIP))
+		case "/primary_ips/42":
+			gets++
+			_, _ = w.Write([]byte(`{"primary_ip":{"id":42,"ip":"203.0.113.10","type":"ipv4",
+				"dns_ptr":[{"ip":"203.0.113.10","dns_ptr":"smtp.example.com"}]}}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+	})
+	for _, want := range []string{"mail.example.com", "smtp.example.com"} {
+		if ptr, err := c.GetPTR(context.Background(), "203.0.113.10"); err != nil || ptr != want {
+			t.Fatalf("got %q, %v, want %q", ptr, err, want)
+		}
+	}
+	if lookups != 1 || gets != 1 {
+		t.Fatalf("lookups = %d, gets = %d", lookups, gets)
+	}
+}
+
+func TestGetPTRCachedIDReassigned(t *testing.T) {
+	var lookups int
+	c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/primary_ips":
+			lookups++
+			_, _ = w.Write([]byte(primaryIP))
+		case "/primary_ips/42":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"primary_ip with ID '42' not found"}}`))
+		}
+	})
+	c.setID("203.0.113.10", 42)
+	if ptr, err := c.GetPTR(context.Background(), "203.0.113.10"); err != nil || ptr != "mail.example.com" {
+		t.Fatalf("got %q, %v", ptr, err)
+	}
+	if lookups != 1 {
+		t.Fatalf("lookups = %d", lookups)
+	}
+}
+
+func TestGetPTRIPv6(t *testing.T) {
+	c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/primary_ips" || r.URL.Query().Has("ip") {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+		_, _ = w.Write([]byte(`{"primary_ips":[
+			{"id":42,"ip":"203.0.113.10","type":"ipv4","dns_ptr":[]},
+			{"id":43,"ip":"2001:db8:1:2::/64","type":"ipv6",
+				"dns_ptr":[{"ip":"2001:db8:1:2::1","dns_ptr":"mail.example.com"}]}],
+			"meta":{"pagination":{"page":1,"per_page":50,"previous_page":null,"next_page":null,"last_page":1,"total_entries":2}}}`))
+	})
+	ctx := context.Background()
+	if ptr, err := c.GetPTR(ctx, "2001:db8:1:2:0:0:0:1"); err != nil || ptr != "mail.example.com" {
+		t.Fatalf("got %q, %v", ptr, err)
+	}
+	if ptr, err := c.GetPTR(ctx, "2001:db8:1:2::2"); err != nil || ptr != "" {
+		t.Fatalf("got %q, %v", ptr, err)
+	}
+	if _, err := c.GetPTR(ctx, "2001:db8:1:3::1"); !errors.Is(err, rdns.ErrIPNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestRateLimited(t *testing.T) {
+	var requests int
 	c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests++
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":{"code":"rate_limit_exceeded","message":"limit of 3600 requests per hour reached"}}`))
 	})
 	if _, err := c.GetPTR(context.Background(), "203.0.113.10"); !errors.Is(err, rdns.ErrRateLimited) {
 		t.Fatalf("err = %v", err)
+	}
+	// hcloud-go does not retry, so the controller sees the rate limit at once.
+	if requests != 1 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
+func TestIsServer(t *testing.T) {
+	c := NewClient("token")
+	for id, want := range map[string]bool{"hcloud://123": true, "hcloud://bm-123": false, "hrobot://123": false, "": false} {
+		if got := c.IsServer(id); got != want {
+			t.Errorf("IsServer(%q) = %v", id, got)
+		}
 	}
 }
 

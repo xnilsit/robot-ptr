@@ -69,17 +69,10 @@ type NodeReconciler struct {
 	Recorder    events.EventRecorder
 	Annotations Annotations
 
-	// Robot and Cloud tell whether RDNS manages Hetzner Robot and Hetzner Cloud
-	// IPs. They decide which nodes HCCMManaged keeps and how foreign IPs are
-	// reported.
-	Robot, Cloud bool
-
 	// NodeSelector restricts the nodes that are managed.
 	NodeSelector labels.Selector
 	// HCCMManaged restricts the managed nodes to those whose spec.providerID
-	// hcloud-cloud-controller-manager set to a server of an enabled API: a
-	// Robot server (hrobot://, or hcloud://bm- from older versions) or a Cloud
-	// server (hcloud://).
+	// hcloud-cloud-controller-manager set to a server of an account of RDNS.
 	HCCMManaged bool
 	// DefaultPTR is applied when no annotated pod runs on a node. An empty
 	// value deletes the entry, which restores Hetzner's generated name.
@@ -193,9 +186,9 @@ func (r *NodeReconciler) rdnsErrorResult(ctx context.Context, node *corev1.Node,
 // changes, instead of on every reconcile.
 func (r *NodeReconciler) reportUnknownIP(ctx context.Context, node *corev1.Node, ip string) {
 	msg := fmt.Sprintf("%s does not belong to %s, set the %s annotation or exclude the node "+
-		"with --node-selector or --hccm-managed", ip, r.accounts(), r.Annotations.IP)
+		"with --node-selector or --hccm-managed", ip, r.RDNS.Account(), r.Annotations.IP)
 	if strings.TrimSpace(node.Annotations[r.Annotations.IP]) != "" {
-		msg = fmt.Sprintf("%s from the %s annotation does not belong to %s", ip, r.Annotations.IP, r.accounts())
+		msg = fmt.Sprintf("%s from the %s annotation does not belong to %s", ip, r.Annotations.IP, r.RDNS.Account())
 	}
 	log := logf.FromContext(ctx).WithValues("ip", ip)
 	if !r.setNodeMessage(&r.unknownIP, node.Name, msg) {
@@ -204,17 +197,6 @@ func (r *NodeReconciler) reportUnknownIP(ctx context.Context, node *corev1.Node,
 	}
 	log.Info("ip does not belong to any configured account, retrying at next resync")
 	r.Recorder.Eventf(node, nil, corev1.EventTypeWarning, "UnknownIP", "UpdatePTR", "%s", msg)
-}
-
-// accounts describes the accounts RDNS manages, for messages.
-func (r *NodeReconciler) accounts() string {
-	switch {
-	case r.Robot && r.Cloud:
-		return "the Robot account or the Cloud project"
-	case r.Cloud:
-		return "the Cloud project"
-	}
-	return "the Robot account"
 }
 
 // resetWait returns how long the reset of node to its default PTR still has to
@@ -376,30 +358,10 @@ func (r *NodeReconciler) defaultPTR(node *corev1.Node) string {
 }
 
 func (r *NodeReconciler) manages(node *corev1.Node) bool {
-	if r.HCCMManaged && !r.isEnabledServer(node.Spec.ProviderID) {
+	if r.HCCMManaged && !r.RDNS.IsServer(node.Spec.ProviderID) {
 		return false
 	}
 	return r.NodeSelector == nil || r.NodeSelector.Matches(labels.Set(node.Labels))
-}
-
-// isEnabledServer reports whether the provider ID belongs to a server of an
-// enabled API.
-func (r *NodeReconciler) isEnabledServer(providerID string) bool {
-	return (r.Robot && isRobotProviderID(providerID)) || (r.Cloud && isCloudProviderID(providerID))
-}
-
-// isRobotProviderID reports whether id is the provider ID
-// hcloud-cloud-controller-manager sets on Hetzner Robot servers. Older
-// versions used hcloud://bm-<server number>, which nodes registered back then
-// keep because a provider ID never changes.
-func isRobotProviderID(id string) bool {
-	return strings.HasPrefix(id, "hrobot://") || strings.HasPrefix(id, "hcloud://bm-")
-}
-
-// isCloudProviderID reports whether id is the provider ID
-// hcloud-cloud-controller-manager sets on Hetzner Cloud servers.
-func isCloudProviderID(id string) bool {
-	return strings.HasPrefix(id, "hcloud://") && !isRobotProviderID(id)
 }
 
 // nodeIP returns the IP whose PTR is managed: the IP annotation if set,

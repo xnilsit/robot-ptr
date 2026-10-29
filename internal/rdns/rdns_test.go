@@ -3,10 +3,12 @@ package rdns
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
 type fakeClient struct {
+	name  string            // account name, also the provider ID scheme
 	ptrs  map[string]string // IPs of the account
 	err   error             // returned by every call if set
 	calls int
@@ -35,6 +37,12 @@ func (f *fakeClient) SetPTR(_ context.Context, ip, ptr string) error {
 
 func (f *fakeClient) DeletePTR(ctx context.Context, ip string) error {
 	return f.SetPTR(ctx, ip, "")
+}
+
+func (f *fakeClient) Account() string { return f.name }
+
+func (f *fakeClient) IsServer(providerID string) bool {
+	return strings.HasPrefix(providerID, f.name+"://")
 }
 
 func TestMultiRoutesToOwner(t *testing.T) {
@@ -114,5 +122,21 @@ func TestMultiOwnerChanges(t *testing.T) {
 	cloud.ptrs["192.0.2.1"] = "cloud.example.com"
 	if ptr, err := m.GetPTR(ctx, "192.0.2.1"); err != nil || ptr != "cloud.example.com" {
 		t.Fatalf("got %q, %v", ptr, err)
+	}
+	// The former owner is not asked twice.
+	if robot.calls != 2 {
+		t.Fatalf("robot calls = %d", robot.calls)
+	}
+}
+
+func TestMultiAccounts(t *testing.T) {
+	m := NewMulti(&fakeClient{name: "robot"}, &fakeClient{name: "cloud"})
+	if got := m.Account(); got != "robot or cloud" {
+		t.Fatalf("account = %q", got)
+	}
+	for id, want := range map[string]bool{"robot://1": true, "cloud://1": true, "aws://1": false, "": false} {
+		if got := m.IsServer(id); got != want {
+			t.Errorf("IsServer(%q) = %v", id, got)
+		}
 	}
 }

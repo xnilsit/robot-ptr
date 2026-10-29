@@ -16,13 +16,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/xnilsit/robot-ptr/internal/cloud"
 	"github.com/xnilsit/robot-ptr/internal/rdns"
 	"github.com/xnilsit/robot-ptr/internal/robot"
 )
 
 const nodeIP = "203.0.113.10"
 
+// fakeRobot fakes the PTR records of an account. Account and IsServer come
+// from the embedded client, the Robot one unless a test picks other APIs.
 type fakeRobot struct {
+	rdns.Client
 	ptrs    map[string]string
 	foreign map[string]bool // IPs that do not belong to the account
 	err     error           // returned by every call if set
@@ -78,14 +82,16 @@ func newFixture(t *testing.T, objs ...client.Object) *fixture {
 		}).
 		Build()
 	f := &fixture{
-		robot: &fakeRobot{ptrs: map[string]string{nodeIP: "static.10.113.0.203.clients.your-server.de"}},
-		rec:   events.NewFakeRecorder(10),
-		now:   time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC),
+		robot: &fakeRobot{
+			Client: enabledAPIs(true, false),
+			ptrs:   map[string]string{nodeIP: "static.10.113.0.203.clients.your-server.de"},
+		},
+		rec: events.NewFakeRecorder(10),
+		now: time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC),
 	}
 	f.r = &NodeReconciler{
 		Client:         c,
 		RDNS:           f.robot,
-		Robot:          true,
 		Recorder:       f.rec,
 		Annotations:    AnnotationsWithPrefix(DefaultAnnotationPrefix),
 		ResetDelay:     time.Minute,
@@ -95,14 +101,27 @@ func newFixture(t *testing.T, objs ...client.Object) *fixture {
 	return f
 }
 
+// enabledAPIs returns the clients of the enabled APIs, for their Account and IsServer.
+func enabledAPIs(useRobot, useCloud bool) rdns.Client {
+	var clients []rdns.Client
+	if useRobot {
+		clients = append(clients, robot.NewClient("", ""))
+	}
+	if useCloud {
+		clients = append(clients, cloud.NewClient(""))
+	}
+	if len(clients) == 1 {
+		return clients[0]
+	}
+	return rdns.NewMulti(clients...)
+}
+
 // restart replaces the reconciler, dropping all in-memory state.
 func (f *fixture) restart() {
 	r := f.r
 	f.r = &NodeReconciler{
 		Client:         r.Client,
 		RDNS:           r.RDNS,
-		Robot:          r.Robot,
-		Cloud:          r.Cloud,
 		Recorder:       r.Recorder,
 		Annotations:    r.Annotations,
 		ResetDelay:     r.ResetDelay,
@@ -395,7 +414,7 @@ func TestHCCMManaged(t *testing.T) {
 			n.Spec.ProviderID = providerID
 			f := newFixture(t, n, pod("smtp", "mail.example.com", time.Now(), true))
 			f.r.HCCMManaged = true
-			f.r.Robot, f.r.Cloud = tc.apis.robot, tc.apis.cloud
+			f.robot.Client = enabledAPIs(tc.apis.robot, tc.apis.cloud)
 			f.reconcile(t)
 			if got := f.robot.ptrs[nodeIP] == "mail.example.com"; got != managed {
 				t.Fatalf("managed = %v, want %v (reads=%d)", got, managed, f.robot.reads)
@@ -446,7 +465,7 @@ func TestUnknownIPNamesAccounts(t *testing.T) {
 		{true, true, "does not belong to the Robot account or the Cloud project,"},
 	} {
 		f := newFixture(t, node(nil), pod("smtp", "mail.example.com", time.Now(), true))
-		f.r.Robot, f.r.Cloud = tc.robot, tc.cloud
+		f.robot.Client = enabledAPIs(tc.robot, tc.cloud)
 		// Cloud and Multi wrap rdns.ErrIPNotFound instead of returning a Robot error.
 		f.robot.err = fmt.Errorf("lookup: %w", rdns.ErrIPNotFound)
 		f.reconcile(t)
