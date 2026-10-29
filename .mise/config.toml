@@ -41,6 +41,10 @@ run = ["actionlint", "zizmor .github/workflows"]
 description = "Scan for known vulnerabilities with govulncheck"
 run = "govulncheck ./..."
 
+[tasks.security-fixes]
+description = "List high-severity vulnerabilities fixed since the last release"
+run = ".mise/scripts/security-fixes.sh"
+
 [tasks.test-chart]
 description = "Lint the Helm chart and check its rendered manifests"
 run = ".mise/scripts/test-chart.sh"

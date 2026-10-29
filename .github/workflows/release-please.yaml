@@ -6,6 +6,10 @@ on:
   push:
     branches:
       - main
+  # Catches vulnerabilities that are published or scored after their fix was
+  # merged.
+  schedule:
+    - cron: "23 5 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -43,13 +47,35 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Setup Mise
+        uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        with:
+          cache: false
+          experimental: true
+          install_args: --locked go go:golang.org/x/vuln/cmd/govulncheck
+
+      # A vulnerability with a CVSS score of 7.0 or more that the last release
+      # calls and HEAD no longer does is released right away.
+      - name: Check for security fixes
+        id: security
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fixes=$(.mise/scripts/security-fixes.sh)
+          if [[ -n "$fixes" ]]; then
+            printf '### Security fixes since the last release\n\n```\n%s\n```\n' "$fixes" >> "$GITHUB_STEP_SUMMARY"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # Every commit type is listed in the changelog, but only these open a
       # release pull request. ci, chore, docs, ... wait for the next release.
       - name: Check for releasable commits
         id: releasable
+        env:
+          SECURITY_FIXES: ${{ steps.security.outputs.found }}
         run: |
           last=$(git describe --tags --abbrev=0 --match '[0-9]*' 2>/dev/null || true)
-          if git log --format=%B "${last:+$last..}HEAD" |
+          if [[ "$SECURITY_FIXES" == true ]] || git log --format=%B "${last:+$last..}HEAD" |
             grep -qE '^((feat|fix|perf|refactor|deps|revert)(\([^)]*\))?!?|[a-z]+(\([^)]*\))?!): |^BREAKING[ -]CHANGE: '; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
@@ -65,6 +91,16 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: ${{ steps.releasable.outputs.found != 'true' }}
+
+      # Pushes by the GitHub App trigger this workflow again, which then tags
+      # the release.
+      - name: Merge the release pull request
+        if: ${{ steps.security.outputs.found == 'true' && steps.release.outputs.release_created != 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" --json number --jq '.[0].number')
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash
 
   # The release image and chart are built from here, right after the release
   # is created, instead of on `release: published`.

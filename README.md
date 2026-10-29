@@ -121,6 +121,12 @@ tags, and the Helm chart to `oci://ghcr.io/xnilsit/charts/robot-ptr`. Both are
 signed with cosign. Every push to `main` also publishes
 `ghcr.io/xnilsit/robot-ptr:main`.
 
+Security fixes don't wait for the release PR to be merged by hand. On every push
+to `main` and once a day, govulncheck compares the last release with `main`.
+If code the release calls has a vulnerability that `main` fixes and its highest
+CVSS score (NVD or GitHub advisory) is 7.0 or more, the release PR is merged
+automatically. `mise run security-fixes` shows what that check finds.
+
 ## License
 
 [Apache License 2.0](LICENSE)

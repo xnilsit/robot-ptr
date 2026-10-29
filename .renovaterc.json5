@@ -2,6 +2,8 @@
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["github>home-operations/renovate-presets#10.0.1"],
   postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
+  // Open fix PRs for vulnerable Go modules right away, outside any schedule.
+  osvVulnerabilityAlerts: true,
   packageRules: [
     {
       description: "The Go toolchain is compiled into the binary, so its updates have to cut a release.",
