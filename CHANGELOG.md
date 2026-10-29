@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.1](https://github.com/xnilsit/robot-ptr/compare/0.1.0...0.1.1) (2026-10-29)
+
+
+### Features
+
+* skip nodes that are not Hetzner Robot servers ([#6](https://github.com/xnilsit/robot-ptr/issues/6)) ([5ea9a64](https://github.com/xnilsit/robot-ptr/commit/5ea9a64a89518e3c26ccae2799bb3bba62a2e12f))
+
+
+### Continuous Integration
+
+* **github-action:** update action jdx/mise-action (v5.2.3 ➔ v5.2.4) ([#2](https://github.com/xnilsit/robot-ptr/issues/2)) ([bfab875](https://github.com/xnilsit/robot-ptr/commit/bfab8753b40f5be587a45a325d73fad582333f80))
+* **github-action:** update action jdx/mise-action (v5.2.3 ➔ v5.2.4) ([#5](https://github.com/xnilsit/robot-ptr/issues/5)) ([8683dca](https://github.com/xnilsit/robot-ptr/commit/8683dca8d995e906e2cd0955e63e3d237bb19b49))
+* let the security release merge wait for CI ([387ef83](https://github.com/xnilsit/robot-ptr/commit/387ef83ff04e8f7df5107eccf425ed27e5f41276))
+* release fixes for high-severity vulnerabilities right away ([8953b8f](https://github.com/xnilsit/robot-ptr/commit/8953b8f1694726109b7935893dfe694b50b6500a))
+
+
+### Miscellaneous Chores
+
+* **renovate:** automerge vulnerability fixes ([8ca4a65](https://github.com/xnilsit/robot-ptr/commit/8ca4a65cfc8640195ac79e429f8e13d89750b8bb))
+
 ## 0.1.0 (2026-10-29)
 
 
