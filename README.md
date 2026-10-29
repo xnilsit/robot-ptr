@@ -111,11 +111,14 @@ mise run run   # dry-run against the current kubeconfig, needs ROBOT_USER/ROBOT_
 ## Releases
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org).
-[release-please](https://github.com/googleapis/release-please) keeps a release PR
-open; merging it tags the release and publishes a signed multi-arch image to
+[release-please](https://github.com/googleapis/release-please) keeps a release
+PR open as soon as a `feat`, `fix`, `perf`, `refactor`, `deps`, `revert` or
+breaking commit lands. Other types (`ci`, `chore`, `docs`, ...) don't open one,
+but are listed in the changelog of the next release. Merging the release PR tags
+the release and publishes a signed multi-arch image to
 `ghcr.io/xnilsit/robot-ptr` with `X.Y.Z`, `X.Y`, `X` (from 1.0) and `rolling`
-tags, and the Helm chart to `oci://ghcr.io/xnilsit/charts/robot-ptr`. Both
-are signed with cosign. Every push to `main` also publishes
+tags, and the Helm chart to `oci://ghcr.io/xnilsit/charts/robot-ptr`. Both are
+signed with cosign. Every push to `main` also publishes
 `ghcr.io/xnilsit/robot-ptr:main`.
 
 ## License

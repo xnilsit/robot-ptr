@@ -37,6 +37,26 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
 
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Every commit type is listed in the changelog, but only these open a
+      # release pull request. ci, chore, docs, ... wait for the next release.
+      - name: Check for releasable commits
+        id: releasable
+        run: |
+          last=$(git describe --tags --abbrev=0 --match '[0-9]*' 2>/dev/null || true)
+          if git log --format=%B "${last:+$last..}HEAD" |
+            grep -qE '^((feat|fix|perf|refactor|deps|revert)(\([^)]*\))?!?|[a-z]+(\([^)]*\))?!): |^BREAKING[ -]CHANGE: '; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No releasable commits since ${last:-the first commit}, skipping the release pull request"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Release Please
         id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -44,6 +64,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          skip-github-pull-request: ${{ steps.releasable.outputs.found != 'true' }}
 
   # The release image and chart are built from here, right after the release
   # is created, instead of on `release: published`.
