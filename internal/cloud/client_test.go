@@ -251,3 +251,51 @@ func TestChangePTRPrimaryIPGone(t *testing.T) {
 		t.Fatal("stale primary ip id kept")
 	}
 }
+
+func TestChangePTRPrimaryIPRecreated(t *testing.T) {
+	recreated := false
+	var changed bool
+	c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/primary_ips" && recreated:
+			_, _ = w.Write([]byte(strings.Replace(primaryIP, `"id":42`, `"id":43`, 1)))
+		case r.URL.Path == "/primary_ips":
+			_, _ = w.Write([]byte(primaryIP))
+		case r.URL.Path == "/primary_ips/43/actions/change_dns_ptr":
+			changed = true
+			_, _ = w.Write([]byte(`{"action":{"id":7,"command":"change_dns_ptr","status":"success","progress":100}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"primary_ip with ID '42' not found"}}`))
+		}
+	})
+	ctx := context.Background()
+	if _, err := c.GetPTR(ctx, "203.0.113.10"); err != nil {
+		t.Fatal(err)
+	}
+	recreated = true
+	if err := c.SetPTR(ctx, "203.0.113.10", "mail.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if !changed || c.id("203.0.113.10") != 43 {
+		t.Fatalf("changed = %v, id = %d", changed, c.id("203.0.113.10"))
+	}
+}
+
+func TestChangePTRActionNotFound(t *testing.T) {
+	c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/primary_ips":
+			_, _ = w.Write([]byte(primaryIP))
+		case "/primary_ips/42/actions/change_dns_ptr":
+			_, _ = w.Write([]byte(`{"action":{"id":7,"command":"change_dns_ptr","status":"running","progress":0}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"not found"}}`))
+		}
+	})
+	err := c.SetPTR(context.Background(), "203.0.113.10", "mail.example.com")
+	if err == nil || errors.Is(err, rdns.ErrIPNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}

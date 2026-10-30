@@ -119,13 +119,19 @@ func (m *Multi) find(ctx context.Context, ip string) (Client, string, error) {
 
 func (m *Multi) write(ctx context.Context, ip string, fn func(Client) error) error {
 	owner := m.owner(ip)
-	if owner == nil {
-		var err error
-		if owner, _, err = m.find(ctx, ip); err != nil {
+	if owner != nil {
+		err := fn(owner)
+		if !errors.Is(err, ErrIPNotFound) {
 			return err
 		}
+		// The remembered client no longer knows ip, another one may.
+		m.setOwner(ip, nil)
 	}
-	err := fn(owner)
+	owner, _, err := m.find(ctx, ip)
+	if err != nil {
+		return err
+	}
+	err = fn(owner)
 	if errors.Is(err, ErrIPNotFound) {
 		m.setOwner(ip, nil)
 	}
