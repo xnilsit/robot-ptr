@@ -92,20 +92,22 @@ The `config` values map to the flags below. The chart derives the rest:
 
 ## Flags
 
-| Flag                          | Default                           | Description                                          |
-| ----------------------------- | --------------------------------- | ---------------------------------------------------- |
-| `--annotation-prefix`         | `robot-ptr.nilsit.dev`            | Prefix of all annotations.                           |
-| `--default-ptr`               | `""`                              | PTR when no annotated pod runs on the node.          |
-| `--node-selector`             | `""`                              | Label selector for managed nodes.                    |
-| `--hccm-managed`              | `false`                           | Skip nodes that are not servers of a configured API. |
-| `--reset-delay`               | `1m`                              | Grace period before resetting to the default.        |
-| `--resync-interval`           | `15m`                             | Drift correction interval.                           |
-| `--dry-run`                   | `false`                           | Log changes without applying them.                   |
-| `--leader-elect`              | `false`                           | Enable leader election.                              |
-| `--robot-url`                 | `https://robot-ws.your-server.de` | Robot webservice URL.                                |
-| `--hcloud-endpoint`           | `https://api.hetzner.cloud/v1`    | Cloud API URL.                                       |
-| `--metrics-bind-address`      | `:8080`                           | Metrics endpoint.                                    |
-| `--health-probe-bind-address` | `:8081`                           | Health probe endpoint.                               |
+| Flag                          | Chart value                      | Default                           | Description                                                |
+| ----------------------------- | -------------------------------- | --------------------------------- | ---------------------------------------------------------- |
+| `--annotation-prefix`         | `config.annotationPrefix`        | `robot-ptr.nilsit.dev`            | Prefix of all annotations.                                 |
+| `--default-ptr`               | `config.defaultPTR`              | `""`                              | PTR when no annotated pod runs on the node.                |
+| `--node-selector`             | `config.nodeSelector`            | `""`                              | Label selector for managed nodes.                          |
+| `--hccm-managed`              | `config.hccmManaged`             | `false`                           | Skip nodes that are not servers of a configured API.       |
+| `--reset-delay`               | `config.resetDelay`              | `1m`                              | Grace period before resetting to the default.              |
+| `--resync-interval`           | `config.resyncInterval`          | `15m`                             | Drift correction interval.                                 |
+| `--dry-run`                   | `config.dryRun`                  | `false`                           | Log changes without applying them.                         |
+| `--max-concurrent-reconciles` | `config.maxConcurrentReconciles` | `4`                               | Nodes reconciled at once.                                  |
+| `--leader-elect`              | `controllers.main.replicas` > 1  | `false`                           | Enable leader election.                                    |
+| `--robot-url`                 | `config.robotURL`                | `https://robot-ws.your-server.de` | Robot webservice URL.                                      |
+| `--hcloud-endpoint`           | `config.hcloudEndpoint`          | `https://api.hetzner.cloud/v1`    | Cloud API URL.                                             |
+| `--zap-log-level`             | `config.logLevel`                | `info`                            | Log level: `debug`, `info`, `error` or a positive integer. |
+| `--metrics-bind-address`      | —                                | `:8080`                           | Metrics endpoint.                                          |
+| `--health-probe-bind-address` | —                                | `:8081`                           | Health probe endpoint.                                     |
 
 ## Development
 

@@ -20,6 +20,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -85,6 +86,9 @@ type NodeReconciler struct {
 	ResyncInterval time.Duration
 	// DryRun logs changes instead of applying them.
 	DryRun bool
+	// MaxConcurrentReconciles is how many nodes are reconciled at once, so a
+	// slow Hetzner API call does not hold up the others. 0 means 1.
+	MaxConcurrentReconciles int
 
 	// Now is overridable for tests.
 	Now func() time.Time
@@ -506,6 +510,7 @@ func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("node").
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles}).
 		For(&corev1.Node{}, builder.WithPredicates(nodeChanged)).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(podToNode), builder.WithPredicates(annotated)).
 		Complete(r)

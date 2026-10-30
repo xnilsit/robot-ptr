@@ -46,6 +46,7 @@ func main() {
 		resetDelay       time.Duration
 		resyncInterval   time.Duration
 		dryRun           bool
+		maxConcurrent    int
 		robotURL         string
 		hcloudEndpoint   string
 	)
@@ -66,6 +67,8 @@ func main() {
 	flag.DurationVar(&resyncInterval, "resync-interval", 15*time.Minute,
 		"How often each node's PTR is re-read from the Hetzner API to correct drift.")
 	flag.BoolVar(&dryRun, "dry-run", false, "Log PTR changes without applying them.")
+	flag.IntVar(&maxConcurrent, "max-concurrent-reconciles", 4,
+		"How many nodes are reconciled at once, so a slow Hetzner API call does not hold up the others.")
 	flag.StringVar(&robotURL, "robot-url", robot.DefaultBaseURL, "Hetzner Robot webservice URL.")
 	flag.StringVar(&hcloudEndpoint, "hcloud-endpoint", hcloud.Endpoint, "Hetzner Cloud API URL.")
 
@@ -88,6 +91,7 @@ func main() {
 		resetDelay:     resetDelay,
 		resyncInterval: resyncInterval,
 		dryRun:         dryRun,
+		maxConcurrent:  maxConcurrent,
 		robotURL:       robotURL,
 		hcloudEndpoint: hcloudEndpoint,
 	}); err != nil {
@@ -107,6 +111,7 @@ type runOptions struct {
 	resetDelay     time.Duration
 	resyncInterval time.Duration
 	dryRun         bool
+	maxConcurrent  int
 	robotURL       string
 	hcloudEndpoint string
 }
@@ -123,6 +128,9 @@ func run(o runOptions) error {
 	}
 	if o.resyncInterval <= 0 {
 		return errors.New("--resync-interval must be positive")
+	}
+	if o.maxConcurrent <= 0 {
+		return errors.New("--max-concurrent-reconciles must be positive")
 	}
 	if useRobot {
 		if err := checkURL("--robot-url", o.robotURL); err != nil {
@@ -184,6 +192,8 @@ func run(o runOptions) error {
 		ResetDelay:     o.resetDelay,
 		ResyncInterval: o.resyncInterval,
 		DryRun:         o.dryRun,
+
+		MaxConcurrentReconciles: o.maxConcurrent,
 	}).SetupWithManager(mgr); err != nil {
 		return err
 	}
