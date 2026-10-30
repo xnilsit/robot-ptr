@@ -96,12 +96,15 @@ jobs:
       - name: Run govulncheck
         run: mise run vulncheck
 
+  # Pull requests from this repository push pr-<number> and pr-<number>-<sha>,
+  # which pr-image-cleanup.yaml deletes once the pull request is closed.
   image-build:
     name: Image Build
     if: ${{ github.event_name != 'push' }}
     runs-on: ubuntu-26.04
     permissions:
       contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -118,17 +121,55 @@ jobs:
         id: tools
         run: echo "go=$(mise config get tools.go)" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve image tags
+        id: image
+        env:
+          PUSH: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          if [[ "$PUSH" == true ]]; then
+            {
+              echo "push=true"
+              echo "version=pr-$PR"
+              echo "tags<<EOF"
+              echo "$IMAGE:pr-$PR"
+              echo "$IMAGE:pr-$PR-${SHA::7}"
+              echo "EOF"
+            } >>"$GITHUB_OUTPUT"
+          else
+            {
+              echo "push=false"
+              echo "version=dev"
+              echo "tags=$IMAGE:ci"
+            } >>"$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - name: Log in to GHCR
+        if: ${{ steps.image.outputs.push == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
+
+      # Without attestations the image index only lists the platform images,
+      # which the cleanup deletes with it.
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          push: false
-          tags: ghcr.io/${{ github.repository }}:ci
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.image.outputs.push == 'true' }}
+          provenance: false
+          sbom: false
+          tags: ${{ steps.image.outputs.tags }}
           build-args: |
             GO_VERSION=${{ steps.tools.outputs.go }}
+            VERSION=${{ steps.image.outputs.version }}
+            REVISION=${{ github.event.pull_request.head.sha || github.sha }}
 
   helm-chart:
     name: Helm Chart

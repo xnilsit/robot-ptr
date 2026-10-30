@@ -1,12 +1,15 @@
 ARG GO_VERSION
-FROM golang:${GO_VERSION}-alpine AS builder
+# Builds on the runner's platform and cross-compiles, so no image is emulated.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 ARG REVISION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=${VERSION} -X main.Gitsha=${REVISION}" -trimpath -o /out/robot-ptr ./cmd/robot-ptr
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-s -w -X main.Version=${VERSION} -X main.Gitsha=${REVISION}" -trimpath -o /out/robot-ptr ./cmd/robot-ptr
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /out/robot-ptr /robot-ptr
