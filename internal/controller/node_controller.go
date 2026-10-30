@@ -37,6 +37,9 @@ const (
 
 	// podNodeNameField indexes pods by spec.nodeName.
 	podNodeNameField = "spec.nodeName"
+
+	// busyRequeue is how long to wait for a PTR change still in progress.
+	busyRequeue = 15 * time.Second
 )
 
 // Annotations holds the annotation keys used by the controller.
@@ -177,6 +180,10 @@ func (r *NodeReconciler) rdnsErrorResult(ctx context.Context, node *corev1.Node,
 	case errors.Is(err, rdns.ErrRateLimited):
 		log.Info("hetzner api rate limit exceeded, backing off", "error", err.Error())
 		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+	case errors.Is(err, rdns.ErrBusy):
+		// The next reconcile re-reads the PTR once the change is done.
+		log.Info("ptr change still in progress, checking again later", "error", err.Error())
+		return ctrl.Result{RequeueAfter: busyRequeue}, nil
 	case errors.Is(err, rdns.ErrIPNotFound):
 		// Retrying cannot help until the IP is added to the account, so wait
 		// for the next resync instead of backing off.

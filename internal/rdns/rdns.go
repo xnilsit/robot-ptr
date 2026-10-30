@@ -16,6 +16,8 @@ var (
 	ErrIPNotFound = errors.New("ip not found")
 	// ErrRateLimited means the API rejected the request because of its rate limit.
 	ErrRateLimited = errors.New("rate limit exceeded")
+	// ErrBusy means an earlier change of the IP is still in progress.
+	ErrBusy = errors.New("change in progress")
 
 	errNotOwned = fmt.Errorf("%w in any configured account", ErrIPNotFound)
 )

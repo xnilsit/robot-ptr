@@ -505,3 +505,11 @@ func TestUnmanagedNodeDropsPodLeftAt(t *testing.T) {
 		t.Fatalf("unmanaged node touched, reads=%d ptr=%q", f.robot.reads, f.robot.ptrs[nodeIP])
 	}
 }
+
+func TestBusyChecksAgainSoon(t *testing.T) {
+	f := newFixture(t, node(nil), pod("smtp", "mail.example.com", time.Now(), true))
+	f.robot.err = fmt.Errorf("%w: hcloud: conflict (conflict)", rdns.ErrBusy)
+	if res := f.reconcile(t); res.RequeueAfter != busyRequeue {
+		t.Fatalf("requeueAfter = %v", res.RequeueAfter)
+	}
+}
