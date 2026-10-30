@@ -135,6 +135,11 @@ tags, and the Helm chart to `oci://ghcr.io/xnilsit/charts/robot-ptr`. Both are
 signed with cosign. Every push to `main` also publishes
 `ghcr.io/xnilsit/robot-ptr:main`.
 
+Pull requests from this repository publish `ghcr.io/xnilsit/robot-ptr:pr-<number>`,
+which follows the latest push, and `pr-<number>-<short sha>` for each push, to
+test a change before it is released. They are deleted when the pull request is
+closed.
+
 Security fixes don't wait for anyone. Renovate merges its fix PRs for
 vulnerable Go modules once CI passes. On every push to `main` and once a day,
 govulncheck compares the last release with `main`. If code the release calls

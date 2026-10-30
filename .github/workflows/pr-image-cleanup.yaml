@@ -1,0 +1,58 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: PR Image Cleanup
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions: {}
+
+jobs:
+  cleanup:
+    name: Delete PR Images
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-26.04
+    permissions:
+      packages: write
+    steps:
+      # Deletes the pr-<number> and pr-<number>-<sha> images pushed by CI, and
+      # the untagged platform images they list.
+      - name: Delete images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+          PACKAGE: ${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          scope=users
+          if [[ "$OWNER_TYPE" == Organization ]]; then
+            scope=orgs
+          fi
+          base="/$scope/$OWNER/packages/container/$PACKAGE/versions"
+
+          versions=$(gh api --paginate "$base?per_page=100" | jq -s add)
+          tagged=$(jq -c --arg re "^pr-$PR(-[0-9a-f]{7})?$" \
+            '[.[] | select(any(.metadata.container.tags[]; test($re)))]' <<<"$versions")
+          if [[ $(jq length <<<"$tagged") == 0 ]]; then
+            echo "No images for PR #$PR"
+            exit 0
+          fi
+
+          docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          children=$(jq -r '.[].name' <<<"$tagged" | while read -r digest; do
+            docker buildx imagetools inspect --raw "ghcr.io/${OWNER,,}/$PACKAGE@$digest" |
+              jq -r '.manifests[]?.digest'
+          done)
+
+          jq -r --argjson tagged "$tagged" --arg children "$children" '
+            ($children | split("\n") | map(select(. != ""))) as $c
+            | ($tagged | map(.id)) +
+              [.[] | select((.metadata.container.tags | length) == 0 and (.name | IN($c[]))) | .id]
+            | .[]' <<<"$versions" | while read -r id; do
+            gh api --method DELETE "$base/$id"
+            echo "Deleted version $id"
+          done
