@@ -299,3 +299,42 @@ func TestChangePTRActionNotFound(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestChangePTRBusy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		handler func(w http.ResponseWriter, r *http.Request)
+	}{
+		"conflict": {func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"conflict","message":"version conflict, please retry"}}`))
+		}},
+		"locked": {func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusLocked)
+			_, _ = w.Write([]byte(`{"error":{"code":"locked","message":"primary_ip is locked"}}`))
+		}},
+		"action timeout": {func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/actions" {
+				_, _ = w.Write([]byte(`{"actions":[{"id":7,"command":"change_dns_ptr","status":"running","progress":0}],
+					"meta":{"pagination":{"page":1,"per_page":50,"previous_page":null,"next_page":null,"last_page":1,"total_entries":1}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"action":{"id":7,"command":"change_dns_ptr","status":"running","progress":0}}`))
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func(d time.Duration) { actionTimeout = d }(actionTimeout)
+			actionTimeout = 20 * time.Millisecond
+			c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/primary_ips" {
+					_, _ = w.Write([]byte(primaryIP))
+					return
+				}
+				tc.handler(w, r)
+			})
+			err := c.SetPTR(context.Background(), "203.0.113.10", "mail.example.com")
+			if !errors.Is(err, rdns.ErrBusy) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}

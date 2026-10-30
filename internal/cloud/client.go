@@ -5,6 +5,7 @@ package cloud
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -17,8 +18,8 @@ import (
 )
 
 // actionTimeout bounds the wait for a PTR change, which blocks a reconcile
-// worker.
-const actionTimeout = 30 * time.Second
+// worker. A variable for tests.
+var actionTimeout = 30 * time.Second
 
 // Client manages the PTR records of the Primary IPs of one Hetzner Cloud
 // project. A server's public IPs are always Primary IPs, so the IP alone
@@ -165,9 +166,13 @@ func (c *Client) change(ctx context.Context, ip string, ptr *string) error {
 		return mapError(err)
 	}
 	// The change is applied asynchronously; waiting surfaces its errors.
-	ctx, cancel := context.WithTimeout(ctx, actionTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, actionTimeout)
 	defer cancel()
-	if err := c.api.Action.WaitFor(ctx, action); err != nil {
+	if err := c.api.Action.WaitFor(waitCtx, action); err != nil {
+		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			// The action keeps running at Hetzner.
+			return fmt.Errorf("change_dns_ptr action: %w: %w", rdns.ErrBusy, err)
+		}
 		return fmt.Errorf("change_dns_ptr action: %w", mapError(err))
 	}
 	return nil
@@ -189,12 +194,16 @@ func contains(pip *hcloud.PrimaryIP, addr net.IP) bool {
 	return pip.IP.Equal(addr)
 }
 
-// mapError wraps a rate limit error with rdns.ErrRateLimited. A not_found
-// error is left alone: it may come from a stale ID or a vanished action, while
+// mapError wraps a rate limit error with rdns.ErrRateLimited, and the errors
+// for a Primary IP with a running action with rdns.ErrBusy. A not_found error
+// is left alone: it may come from a stale ID or a vanished action, while
 // rdns.ErrIPNotFound is reserved for an IP that no Primary IP contains.
 func mapError(err error) error {
-	if hcloud.IsError(err, hcloud.ErrorCodeRateLimitExceeded) {
+	switch {
+	case hcloud.IsError(err, hcloud.ErrorCodeRateLimitExceeded):
 		return fmt.Errorf("%w: %w", rdns.ErrRateLimited, err)
+	case hcloud.IsError(err, hcloud.ErrorCodeConflict), hcloud.IsError(err, hcloud.ErrorCodeLocked):
+		return fmt.Errorf("%w: %w", rdns.ErrBusy, err)
 	}
 	return err
 }
