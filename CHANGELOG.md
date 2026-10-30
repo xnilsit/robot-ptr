@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/xnilsit/robot-ptr/compare/0.1.2...0.1.3) (2026-10-30)
+
+
+### Features
+
+* reconcile nodes concurrently ([9cb6895](https://github.com/xnilsit/robot-ptr/commit/9cb68959d2c8c9471009b9bb27fd37cf26e94717))
+
+
+### Bug Fixes
+
+* retry PTR writes after a stale Primary IP ID or owner ([745b402](https://github.com/xnilsit/robot-ptr/commit/745b402b6bd1031d5aa86a372b0a7131c0dbe531))
+
 ## [0.1.2](https://github.com/xnilsit/robot-ptr/compare/0.1.1...0.1.2) (2026-10-29)
 
 
