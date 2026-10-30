@@ -16,7 +16,8 @@ import (
 	"github.com/xnilsit/robot-ptr/internal/rdns"
 )
 
-// actionTimeout bounds the wait for a PTR change, which blocks the reconcile.
+// actionTimeout bounds the wait for a PTR change, which blocks a reconcile
+// worker.
 const actionTimeout = 30 * time.Second
 
 // Client manages the PTR records of the Primary IPs of one Hetzner Cloud
@@ -136,7 +137,8 @@ func (c *Client) change(ctx context.Context, ip string, ptr *string) error {
 		return err
 	}
 	id := c.id(ip)
-	if id == 0 {
+	cached := id != 0
+	if !cached {
 		pip, err := c.lookup(ctx, ip, addr)
 		if err != nil {
 			return err
@@ -145,11 +147,21 @@ func (c *Client) change(ctx context.Context, ip string, ptr *string) error {
 	}
 
 	action, _, err := c.api.RDNS.ChangeDNSPtr(ctx, &hcloud.PrimaryIP{ID: id}, addr, ptr)
-	if err != nil {
+	if hcloud.IsError(err, hcloud.ErrorCodeNotFound) {
 		// The Primary IP may have been deleted, or recreated with a new ID.
-		if hcloud.IsError(err, hcloud.ErrorCodeNotFound) {
-			c.setID(ip, 0)
+		c.setID(ip, 0)
+		if cached {
+			pip, lookupErr := c.lookup(ctx, ip, addr)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			action, _, err = c.api.RDNS.ChangeDNSPtr(ctx, pip, addr, ptr)
+			if hcloud.IsError(err, hcloud.ErrorCodeNotFound) {
+				c.setID(ip, 0)
+			}
 		}
+	}
+	if err != nil {
 		return mapError(err)
 	}
 	// The change is applied asynchronously; waiting surfaces its errors.
@@ -177,14 +189,12 @@ func contains(pip *hcloud.PrimaryIP, addr net.IP) bool {
 	return pip.IP.Equal(addr)
 }
 
-// mapError wraps the hcloud errors the controller acts on with their rdns
-// counterpart.
+// mapError wraps a rate limit error with rdns.ErrRateLimited. A not_found
+// error is left alone: it may come from a stale ID or a vanished action, while
+// rdns.ErrIPNotFound is reserved for an IP that no Primary IP contains.
 func mapError(err error) error {
-	switch {
-	case hcloud.IsError(err, hcloud.ErrorCodeRateLimitExceeded):
+	if hcloud.IsError(err, hcloud.ErrorCodeRateLimitExceeded) {
 		return fmt.Errorf("%w: %w", rdns.ErrRateLimited, err)
-	case hcloud.IsError(err, hcloud.ErrorCodeNotFound):
-		return fmt.Errorf("%w: %w", rdns.ErrIPNotFound, err)
 	}
 	return err
 }

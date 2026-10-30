@@ -140,3 +140,23 @@ func TestMultiAccounts(t *testing.T) {
 		}
 	}
 }
+
+func TestMultiWriteOwnerChanges(t *testing.T) {
+	ctx := context.Background()
+	robot := &fakeClient{ptrs: map[string]string{"192.0.2.1": "robot.example.com"}}
+	cloud := &fakeClient{ptrs: map[string]string{}}
+	m := NewMulti(robot, cloud)
+	if _, err := m.GetPTR(ctx, "192.0.2.1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The IP moves to the Cloud project.
+	delete(robot.ptrs, "192.0.2.1")
+	cloud.ptrs["192.0.2.1"] = "cloud.example.com"
+	if err := m.SetPTR(ctx, "192.0.2.1", "mail.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if cloud.ptrs["192.0.2.1"] != "mail.example.com" || m.owner("192.0.2.1") != cloud {
+		t.Fatalf("cloud ptrs = %v", cloud.ptrs)
+	}
+}
