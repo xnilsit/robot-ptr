@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/xnilsit/robot-ptr/compare/0.1.3...0.1.4) (2026-10-30)
+
+
+### Bug Fixes
+
+* wait for a running Hetzner Cloud PTR change instead of failing ([cd8d241](https://github.com/xnilsit/robot-ptr/commit/cd8d24162f08d6539047a7eb9e6cab56ec50492b))
+
+
+### Continuous Integration
+
+* publish an image for each pull request ([aab711f](https://github.com/xnilsit/robot-ptr/commit/aab711f4c3dceb8f3b7abea983d5a6a521c6dcc0))
+
 ## [0.1.3](https://github.com/xnilsit/robot-ptr/compare/0.1.2...0.1.3) (2026-10-30)
 
 
