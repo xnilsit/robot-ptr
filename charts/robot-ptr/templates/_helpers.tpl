@@ -48,6 +48,9 @@ Values merged over the user values before the common library renders them.
     (printf "--reset-delay=%s" ($cfg.resetDelay | toString))
     (printf "--resync-interval=%s" (required "config.resyncInterval is required" $cfg.resyncInterval | toString))
   -}}
+  {{- with $cfg.maxConcurrentReconciles -}}
+    {{- $args = append $args (printf "--max-concurrent-reconciles=%v" .) -}}
+  {{- end -}}
   {{- with $cfg.nodeSelector -}}
     {{- $args = append $args (printf "--node-selector=%s" .) -}}
   {{- end -}}

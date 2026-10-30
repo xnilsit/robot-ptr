@@ -23,6 +23,8 @@ config:
   resyncInterval: 15m
   # -- Log PTR changes without applying them.
   dryRun: false
+  # -- How many nodes are reconciled at once.
+  maxConcurrentReconciles: 4
   # -- Hetzner Robot webservice URL (empty = https://robot-ws.your-server.de).
   robotURL: ""
   # -- Hetzner Cloud API URL (empty = https://api.hetzner.cloud/v1).
