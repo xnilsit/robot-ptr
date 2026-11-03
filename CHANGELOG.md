@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0](https://github.com/xnilsit/robot-ptr/compare/0.1.4...0.2.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **renovate-config:** Update config home-operations/renovate-presets (10.0.1 ➔ 11.0.0)
+
+### Continuous Integration
+
+* **github-action:** update action jdx/mise-action (v5.2.4 ➔ v5.2.5) ([cc25df3](https://github.com/xnilsit/robot-ptr/commit/cc25df3c1af9ed98137ca7e82e683b1f1fca428a))
+* **github-action:** update action jdx/mise-action (v5.2.5 ➔ v5.2.6) ([996dc5d](https://github.com/xnilsit/robot-ptr/commit/996dc5dc47926da40fb597c2b9d4142fc77c0d93))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool zizmor (1.31.1 ➔ 1.32.0) ([83d9de7](https://github.com/xnilsit/robot-ptr/commit/83d9de77e086b2ce8fd0092309738ef849a584fc))
+* **renovate-config:** Update config home-operations/renovate-presets (10.0.1 ➔ 11.0.0) ([a4932c3](https://github.com/xnilsit/robot-ptr/commit/a4932c3bfd2a3151373573a3b0e955d605e3dd42))
+* **renovate:** wait 2 hours before taking new releases ([27ff95a](https://github.com/xnilsit/robot-ptr/commit/27ff95a85bb00c7127babdc472c5b93f87f6ea22))
+
 ## [0.1.4](https://github.com/xnilsit/robot-ptr/compare/0.1.3...0.1.4) (2026-10-30)
 
 
