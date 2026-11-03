@@ -1,6 +1,6 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  extends: ["github>home-operations/renovate-presets#10.0.1"],
+  extends: ["github>home-operations/renovate-presets#11.0.0"],
   postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
   // Release assets can still be uploading when a release appears, and lock
   // files written then end up without download URLs or checksums.
