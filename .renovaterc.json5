@@ -2,6 +2,9 @@
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["github>home-operations/renovate-presets#10.0.1"],
   postUpdateOptions: ["gomodTidy", "gomodUpdateImportPaths"],
+  // Release assets can still be uploading when a release appears, and lock
+  // files written then end up without download URLs or checksums.
+  minimumReleaseAge: "2 hours",
   // Open fix PRs for vulnerable Go modules right away, outside any schedule.
   osvVulnerabilityAlerts: true,
   // Merge them once CI passes. The release workflow then decides whether the
