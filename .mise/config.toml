@@ -6,7 +6,7 @@ go = "1.27.3"
 golangci-lint = "2.15.0"
 helm = "4.3.1"
 kubeconform = "0.8.0"
-yq = "4.54.1"
+yq = "4.54.2"
 zizmor = "1.32.0"
 
 [tasks.build]
