@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.1](https://github.com/xnilsit/robot-ptr/compare/0.2.0...0.2.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **mise:** update tool go (1.27.3 ➔ 1.27.4) ([b4228c7](https://github.com/xnilsit/robot-ptr/commit/b4228c75ba74a94e6824d5642955069212d4c6cc))
+
+
+### Continuous Integration
+
+* **github-action:** update action docker/github-builder (v1.18.1 ➔ v1.19.0) ([23f9734](https://github.com/xnilsit/robot-ptr/commit/23f97343366aedb2944b63c410e2d5c0f7fd7f0f))
+* **github-action:** update action jdx/mise-action (v5.2.6 ➔ v5.2.7) ([88e7160](https://github.com/xnilsit/robot-ptr/commit/88e716020a050ec652ac97ffeb7bcf0dd5fcf6df))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool yq (4.54.1 ➔ 4.54.2) ([11a5dfa](https://github.com/xnilsit/robot-ptr/commit/11a5dfa83df1d02a6499e642c70ccf138c0cb88e))
+* **mise:** update tool yq (4.54.2 ➔ 4.54.3) ([e22f23f](https://github.com/xnilsit/robot-ptr/commit/e22f23f8243fb531d139d761051900bad0f8f5b3))
+
 ## [0.2.0](https://github.com/xnilsit/robot-ptr/compare/0.1.4...0.2.0) (2026-11-03)
 
 
