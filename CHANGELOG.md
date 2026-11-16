@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.2](https://github.com/xnilsit/robot-ptr/compare/0.2.1...0.2.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* **deps:** update module sigs.k8s.io/controller-runtime (v0.25.2 ➔ v0.25.3) ([0d6479e](https://github.com/xnilsit/robot-ptr/commit/0d6479e94448b976b8ea0c6d9e33a42893b9d39d))
+
+
+### Continuous Integration
+
+* **github-action:** update action jdx/mise-action (v5.2.7 ➔ v5.2.8) ([67df3a6](https://github.com/xnilsit/robot-ptr/commit/67df3a6c90e402392f54411612c4bef3adf68a39))
+* **github-action:** update action jdx/mise-action (v5.2.8 ➔ v5.2.9) ([2f9e746](https://github.com/xnilsit/robot-ptr/commit/2f9e7463d61dfdd3a9d4cf5403b527fd8709975f))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool helm (4.3.1 ➔ 4.3.2) ([50d06fc](https://github.com/xnilsit/robot-ptr/commit/50d06fc76bceecae18f08cce4896dc1871055d02))
+
 ## [0.2.1](https://github.com/xnilsit/robot-ptr/compare/0.2.0...0.2.1) (2026-11-11)
 
 
