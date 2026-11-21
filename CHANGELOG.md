@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/xnilsit/robot-ptr/compare/0.2.2...0.3.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **renovate-config:** Update config home-operations/renovate-presets (11.0.0 ➔ 12.0.0)
+
+### Continuous Integration
+
+* **github-action:** update action actions/create-github-app-token (v3.3.0 ➔ v3.4.0) ([4e3acc6](https://github.com/xnilsit/robot-ptr/commit/4e3acc62e44c1e807a5bcd29681cc6931bf13135))
+* **github-action:** update action jdx/mise-action (v5.2.9 ➔ v5.2.10) ([aad2edb](https://github.com/xnilsit/robot-ptr/commit/aad2edb3604aa3a10179224c308da6430a341267))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool go:golang.org/x/vuln/cmd/govulncheck (1.9.0 ➔ v1.10.0) ([5f7d999](https://github.com/xnilsit/robot-ptr/commit/5f7d999e9546ecf7a31d5a2f07d58060daf87269))
+* **renovate-config:** Update config home-operations/renovate-presets (11.0.0 ➔ 12.0.0) ([37bb071](https://github.com/xnilsit/robot-ptr/commit/37bb071e9631b56b87f15a2ea038c779322baf29))
+
 ## [0.2.2](https://github.com/xnilsit/robot-ptr/compare/0.2.1...0.2.2) (2026-11-16)
 
 
