@@ -4,9 +4,9 @@ go 1.27.3
 
 require (
 	github.com/hetznercloud/hcloud-go/v2 v2.53.0
-	k8s.io/api v0.37.2
-	k8s.io/apimachinery v0.37.2
-	k8s.io/client-go v0.37.2
+	k8s.io/api v0.37.3
+	k8s.io/apimachinery v0.37.3
+	k8s.io/client-go v0.37.3
 	sigs.k8s.io/controller-runtime v0.25.3
 )
 
