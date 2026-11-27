@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.0](https://github.com/xnilsit/robot-ptr/compare/0.2.2...0.3.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **renovate-config:** Update config home-operations/renovate-presets (11.0.0 ➔ 12.0.0)
+
+### Bug Fixes
+
+* **deps:** update module k8s.io/client-go (v0.37.2 ➔ v0.37.3) ([f2a151f](https://github.com/xnilsit/robot-ptr/commit/f2a151f121fd80606a3e7525f13b7e25041c5389))
+
+
+### Continuous Integration
+
+* **github-action:** update action actions/create-github-app-token (v3.3.0 ➔ v3.4.0) ([4e3acc6](https://github.com/xnilsit/robot-ptr/commit/4e3acc62e44c1e807a5bcd29681cc6931bf13135))
+* **github-action:** update action docker/github-builder (v1.19.0 ➔ v1.20.0) ([dd52ebc](https://github.com/xnilsit/robot-ptr/commit/dd52ebc199b7beaf86ce98dacec6d39bfc8ac502))
+* **github-action:** update action jdx/mise-action (v5.2.10 ➔ v5.3.0) ([9260e51](https://github.com/xnilsit/robot-ptr/commit/9260e515f82ccce413a49dc0685400210c2f7541))
+* **github-action:** update action jdx/mise-action (v5.2.9 ➔ v5.2.10) ([aad2edb](https://github.com/xnilsit/robot-ptr/commit/aad2edb3604aa3a10179224c308da6430a341267))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool cosign (3.1.4 ➔ 3.1.5) ([c4fe74f](https://github.com/xnilsit/robot-ptr/commit/c4fe74f77e0e78bdfe1861836cc014bfe1341e72))
+* **mise:** update tool cosign (3.1.5 ➔ 3.1.6) ([89c65dc](https://github.com/xnilsit/robot-ptr/commit/89c65dc6d04e31524eac8fb99afb5436f2ab32b0))
+* **mise:** update tool go:golang.org/x/vuln/cmd/govulncheck (1.9.0 ➔ v1.10.0) ([5f7d999](https://github.com/xnilsit/robot-ptr/commit/5f7d999e9546ecf7a31d5a2f07d58060daf87269))
+* **mise:** update tool zizmor (1.32.0 ➔ 1.33.0) ([1737ff1](https://github.com/xnilsit/robot-ptr/commit/1737ff1ba17254e46d0d1c98a1bd0bd1eee11da9))
+* **mise:** update tool zizmor (1.33.0 ➔ 1.33.1) ([3bc6a3b](https://github.com/xnilsit/robot-ptr/commit/3bc6a3bcfed4e94f049b00fe0383c028388e379f))
+* **renovate-config:** Update config home-operations/renovate-presets (11.0.0 ➔ 12.0.0) ([37bb071](https://github.com/xnilsit/robot-ptr/commit/37bb071e9631b56b87f15a2ea038c779322baf29))
+
 ## [0.2.2](https://github.com/xnilsit/robot-ptr/compare/0.2.1...0.2.2) (2026-11-16)
 
 
